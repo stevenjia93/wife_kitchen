@@ -1,0 +1,9 @@
+{
+  "name": "老婆点菜台",
+  "short_name": "点菜台",
+  "description": "一个给家里人点餐、生成今日菜单和采购清单的小工具。",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f6f8f2",
+  "theme_color": "#f6f8f2"
+}
