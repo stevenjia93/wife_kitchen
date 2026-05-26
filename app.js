@@ -196,7 +196,10 @@ let ui = {
   meal: "dinner",
   category: "全部",
   search: "",
-  managerOpen: false,
+  menuDrawerOpen: false,
+  menuMode: "browse",
+  menuCategory: "全部",
+  menuSearch: "",
   detailDishId: null
 };
 
@@ -699,6 +702,7 @@ function render() {
       ${renderDateStrip()}
       ${renderOnlineBar()}
       ${online.enabled && !online.householdId ? renderHouseholdGate() : isWife ? renderWifeView(plan) : renderHusbandView(plan)}
+      ${renderMenuDrawer()}
       ${renderDetailModal()}
     </div>
   `;
@@ -1186,25 +1190,116 @@ function renderShoppingItem(item) {
 
 function renderMenuPanel() {
   const dishes = activeDishes();
+  const categoryCounts = menuCategoryCounts(dishes).filter((item) => item.count > 0);
+  const preview = dishes.slice(0, 3);
   return `
-    <section class="panel">
+    <section class="panel menu-summary-panel">
       <div class="panel-header">
         <div>
           <h2>我的菜单</h2>
-          <p>${dishes.length} 道家常菜，老公维护。</p>
+          <p>${dishes.length} 道家常菜，${categoryCounts.length} 个分类。</p>
         </div>
-        <button class="button" data-action="toggle-manager">${ui.managerOpen ? "收起" : "录入菜谱"}</button>
+        <button class="button" data-action="open-menu-drawer">管理</button>
       </div>
       <div class="panel-body">
-        ${ui.managerOpen ? renderRecipeForm() : renderMenuList(dishes)}
+        <div class="menu-summary-grid">
+          <div class="stat"><strong>${dishes.length}</strong><span>菜谱</span></div>
+          <div class="stat"><strong>${categoryCounts.length}</strong><span>分类</span></div>
+          <div class="stat"><strong>${dishes.filter((dish) => dish.sourceUrl).length}</strong><span>链接</span></div>
+        </div>
+        ${
+          categoryCounts.length
+            ? `<div class="menu-category-preview">${categoryCounts
+                .slice(0, 4)
+                .map((item) => `<span>${escapeHtml(item.category)} ${item.count}</span>`)
+                .join("")}</div>`
+            : ""
+        }
+        ${
+          preview.length
+            ? `<div class="menu-preview-line">${preview.map((dish) => escapeHtml(dish.name)).join("、")}</div>`
+            : `<div class="empty-state compact">菜单还是空的。</div>`
+        }
       </div>
     </section>
   `;
 }
 
+function menuCategoryCounts(dishes = activeDishes()) {
+  return categories
+    .filter((category) => category !== "全部")
+    .map((category) => ({
+      category,
+      count: dishes.filter((dish) => dish.category === category).length
+    }));
+}
+
+function filteredMenuDishes() {
+  const search = ui.menuSearch.trim().toLowerCase();
+  return activeDishes()
+    .filter((dish) => {
+      const categoryOk = ui.menuCategory === "全部" || dish.category === ui.menuCategory;
+      const searchOk =
+        !search ||
+        [dish.name, dish.category, dish.note, dish.ingredients.map((item) => item.name).join(" ")]
+          .join(" ")
+          .toLowerCase()
+          .includes(search);
+      return categoryOk && searchOk;
+    })
+    .sort((a, b) => a.category.localeCompare(b.category, "zh-CN") || a.time - b.time);
+}
+
+function renderMenuDrawer() {
+  if (!ui.menuDrawerOpen) return "";
+  const dishes = activeDishes();
+  const filtered = filteredMenuDishes();
+  return `
+    <div class="menu-drawer-backdrop" data-role="menu-drawer-backdrop">
+      <aside class="menu-drawer" role="dialog" aria-modal="true" aria-label="我的菜单管理">
+        <header class="drawer-header">
+          <div>
+            <h2>我的菜单</h2>
+            <p>${ui.menuMode === "browse" ? `${filtered.length}/${dishes.length} 道` : "录入一道会做的菜"}</p>
+          </div>
+          <button class="icon-button" data-action="close-menu-drawer" aria-label="关闭菜单">×</button>
+        </header>
+        <div class="drawer-tabs" role="tablist" aria-label="菜单管理模式">
+          <button class="${ui.menuMode === "browse" ? "active" : ""}" data-action="set-menu-mode" data-mode="browse">浏览</button>
+          <button class="${ui.menuMode === "form" ? "active" : ""}" data-action="set-menu-mode" data-mode="form">录入</button>
+        </div>
+        <div class="drawer-body">
+          ${ui.menuMode === "form" ? renderRecipeForm() : renderMenuBrowser(filtered, dishes)}
+        </div>
+      </aside>
+    </div>
+  `;
+}
+
+function renderMenuBrowser(filtered, allDishes) {
+  return `
+    <div class="menu-browser">
+      <input class="search compact-search" type="search" value="${escapeAttr(ui.menuSearch)}" placeholder="搜菜名、食材或备注" aria-label="搜索我的菜单" data-role="menu-search" />
+      <div class="category-tabs compact-tabs" aria-label="筛选我的菜单">
+        ${["全部", ...categories.filter((category) => category !== "全部")]
+          .map((category) => {
+            const count = category === "全部" ? allDishes.length : allDishes.filter((dish) => dish.category === category).length;
+            return `
+              <button class="chip ${ui.menuCategory === category ? "active" : ""}" data-action="set-menu-category" data-category="${category}" ${count ? "" : "disabled"}>
+                ${category}<span>${count}</span>
+              </button>
+            `;
+          })
+          .join("")}
+      </div>
+      ${renderMenuList(filtered)}
+    </div>
+  `;
+}
+
 function renderMenuList(dishes = activeDishes()) {
   if (!dishes.length) {
-    return `<div class="empty-state compact">菜单还是空的。</div>`;
+    return `<div class="empty-state compact">没有匹配的菜。</div>`;
   }
   return `
     <ul class="menu-list">
@@ -1216,6 +1311,7 @@ function renderMenuList(dishes = activeDishes()) {
 function renderMenuListItem(dish) {
   return `
     <li class="menu-list-item">
+      <img class="menu-thumb" src="${escapeAttr(dishImageSrc(dish))}" alt="${escapeAttr(dish.name)}" loading="lazy" />
       <div>
         <strong>${escapeHtml(dish.name)}</strong>
         <small>${escapeHtml(dish.category)} · ${dish.time} 分钟 · ${dish.meals.map((meal) => mealLabels[meal]).join("/")}</small>
@@ -1582,6 +1678,9 @@ async function handleFormSubmit(event) {
   saveState();
   ui.category = "全部";
   ui.search = "";
+  ui.menuMode = "browse";
+  ui.menuCategory = "全部";
+  ui.menuSearch = "";
   form.reset();
   render();
   toast(`已加入：${name}`);
@@ -1707,6 +1806,11 @@ app.addEventListener("click", (event) => {
     render();
     return;
   }
+  if (event.target.matches("[data-role='menu-drawer-backdrop']")) {
+    ui.menuDrawerOpen = false;
+    render();
+    return;
+  }
 
   const actionTarget = event.target.closest("[data-action]");
   if (!actionTarget) return;
@@ -1746,8 +1850,21 @@ app.addEventListener("click", (event) => {
     ui.detailDishId = null;
     render();
   }
-  if (action === "toggle-manager") {
-    ui.managerOpen = !ui.managerOpen;
+  if (action === "open-menu-drawer") {
+    ui.menuDrawerOpen = true;
+    ui.menuMode = "browse";
+    render();
+  }
+  if (action === "close-menu-drawer") {
+    ui.menuDrawerOpen = false;
+    render();
+  }
+  if (action === "set-menu-mode") {
+    ui.menuMode = actionTarget.dataset.mode === "form" ? "form" : "browse";
+    render();
+  }
+  if (action === "set-menu-category") {
+    ui.menuCategory = actionTarget.dataset.category || "全部";
     render();
   }
   if (action === "leave-household") leaveHousehold();
@@ -1760,6 +1877,10 @@ app.addEventListener("input", (event) => {
   }
   if (event.target.matches("[data-role='date-picker']")) {
     setSelectedDate(event.target.value);
+  }
+  if (event.target.matches("[data-role='menu-search']")) {
+    ui.menuSearch = event.target.value;
+    render();
   }
 });
 
