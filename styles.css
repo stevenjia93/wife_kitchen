@@ -561,14 +561,15 @@ img {
   right: 10px;
   bottom: 10px;
   z-index: 1;
-  min-width: 46px;
+  min-width: 58px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
   color: var(--tomato);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 900;
   text-align: center;
   padding: 5px 8px;
+  white-space: nowrap;
 }
 
 .dish-body {
@@ -1029,6 +1030,18 @@ img {
 .form-field textarea {
   min-height: 84px;
   resize: vertical;
+}
+
+.file-button {
+  cursor: pointer;
+}
+
+.file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .checkbox-grid {

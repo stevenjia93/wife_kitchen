@@ -644,6 +644,45 @@ function dishSteps(dish) {
   return Array.isArray(dish.steps) && dish.steps.length ? dish.steps : [dish.note || "按家里习惯处理食材，先把主料做熟，再按口味调味。"];
 }
 
+function dishImageSrc(dish) {
+  if (dish?.id === "tomato-eggs" && String(dish.image || "").includes("photo-1589927986089")) {
+    return fallbackDishImage(dish);
+  }
+  return dish?.image || fallbackDishImage(dish);
+}
+
+function fallbackDishImage(dish = {}) {
+  const name = dish.name || "家常菜";
+  const category = dish.category || "菜单";
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560">
+      <defs>
+        <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+          <stop offset="0" stop-color="#fff7ed"/>
+          <stop offset="0.54" stop-color="#f0f6e8"/>
+          <stop offset="1" stop-color="#dcebd2"/>
+        </linearGradient>
+      </defs>
+      <rect width="900" height="560" fill="url(#bg)"/>
+      <circle cx="735" cy="96" r="138" fill="#e14a2e" opacity="0.13"/>
+      <circle cx="146" cy="458" r="118" fill="#287f64" opacity="0.12"/>
+      <rect x="72" y="72" width="756" height="416" rx="36" fill="rgba(255,255,255,0.58)" stroke="#c8d8bd" stroke-width="4"/>
+      <text x="450" y="258" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, sans-serif" font-size="62" font-weight="800" fill="#1f251f">${escapeSvg(name)}</text>
+      <text x="450" y="332" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, sans-serif" font-size="30" font-weight="700" fill="#65705f">${escapeSvg(category)}</text>
+    </svg>
+  `;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+function dishBadgeText(dish) {
+  const feedback = state.feedback[dish.id];
+  if (feedback === "love") return "常点";
+  if (feedback === "skip") return "少做";
+  if ((dish.rating || 0) >= 5) return "拿手菜";
+  if ((dish.rating || 0) >= 4) return "熟练菜";
+  return "家常菜";
+}
+
 function markPlanDraft(plan) {
   plan.submitted = false;
   plan.submittedAt = null;
@@ -841,13 +880,11 @@ function renderMealTab(plan, meal) {
 function renderWifeDishCard(dish, plan) {
   const isOrdered = plan[ui.meal].includes(dish.id);
   const ingredients = dish.ingredients.map((item) => item.name).join("、");
-  const feedback = state.feedback[dish.id];
-  const feedbackText = feedback === "love" ? "常点" : feedback === "skip" ? "少做" : "";
   return `
     <article class="dish-card">
       <div class="dish-image">
-        <img src="${dish.image}" alt="${escapeAttr(dish.name)}" loading="lazy" />
-        <div class="dish-rating">${feedbackText || `${dish.rating || 4}/5`}</div>
+        <img src="${escapeAttr(dishImageSrc(dish))}" alt="${escapeAttr(dish.name)}" loading="lazy" />
+        <div class="dish-rating">${dishBadgeText(dish)}</div>
       </div>
       <div class="dish-body">
         <div class="dish-title-row">
@@ -894,7 +931,7 @@ function renderHistoryMeal(plan, meal) {
       if (!dish) return "";
       return `
         <article class="history-dish-card">
-          <img src="${dish.image}" alt="${escapeAttr(dish.name)}" loading="lazy" />
+          <img src="${escapeAttr(dishImageSrc(dish))}" alt="${escapeAttr(dish.name)}" loading="lazy" />
           <div>
             <div class="dish-title-row">
               <h2>${escapeHtml(dish.name)}</h2>
@@ -1066,7 +1103,7 @@ function renderCookDishCard(meal, id) {
   if (!dish) return "";
   return `
     <article class="cook-card">
-      <img src="${dish.image}" alt="${escapeAttr(dish.name)}" loading="lazy" />
+      <img src="${escapeAttr(dishImageSrc(dish))}" alt="${escapeAttr(dish.name)}" loading="lazy" />
       <div class="cook-card-body">
         <div class="dish-title-row">
           <h3>${escapeHtml(dish.name)}</h3>
@@ -1239,6 +1276,10 @@ function renderRecipeForm() {
         <input id="dish-source" name="sourceUrl" type="url" placeholder="https://www.xiachufang.com/recipe/..." />
       </div>
       <div class="form-field">
+        <label for="dish-image">封面图</label>
+        <input id="dish-image" name="imageFile" type="file" accept="image/*" />
+      </div>
+      <div class="form-field">
         <label for="dish-note">备注</label>
         <textarea id="dish-note" name="note" placeholder="关键火候、老婆偏好、下次改进"></textarea>
       </div>
@@ -1254,7 +1295,7 @@ function renderDetailModal() {
     <div class="detail-backdrop" data-role="detail-backdrop">
       <section class="detail-sheet" role="dialog" aria-modal="true" aria-label="${escapeAttr(dish.name)}详情">
         <div class="detail-media">
-          <img src="${dish.image}" alt="${escapeAttr(dish.name)}" />
+          <img src="${escapeAttr(dishImageSrc(dish))}" alt="${escapeAttr(dish.name)}" />
           <button class="icon-button detail-close" data-action="close-detail" aria-label="关闭详情">×</button>
         </div>
         <div class="detail-content">
@@ -1277,6 +1318,14 @@ function renderDetailModal() {
             <ol>${dishSteps(dish).map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
           </div>
           <a class="button primary wide" href="${escapeAttr(dishSourceUrl(dish))}" target="_blank" rel="noreferrer">打开下厨房参考</a>
+          ${
+            ui.view === "husband"
+              ? `<label class="button wide file-button">
+                  更换封面
+                  <input type="file" accept="image/*" data-role="cover-upload" data-dish="${dish.id}" />
+                </label>`
+              : ""
+          }
         </div>
       </section>
     </div>
@@ -1493,7 +1542,7 @@ async function copyShoppingList() {
   }
 }
 
-function handleFormSubmit(event) {
+async function handleFormSubmit(event) {
   event.preventDefault();
   const form = event.target;
   const data = new FormData(form);
@@ -1511,6 +1560,9 @@ function handleFormSubmit(event) {
     return;
   }
 
+  const imageFile = data.get("imageFile");
+  const imageDataUrl = imageFile instanceof File && imageFile.size ? await compressImageFile(imageFile) : "";
+
   const dish = {
     id: `dish-${Date.now()}`,
     name,
@@ -1519,7 +1571,7 @@ function handleFormSubmit(event) {
     time: Math.max(5, Number(data.get("time")) || 20),
     difficulty: "自家菜",
     rating: 4,
-    image: defaultImages[state.dishes.length % defaultImages.length],
+    image: imageDataUrl,
     ingredients,
     steps,
     sourceUrl,
@@ -1533,6 +1585,60 @@ function handleFormSubmit(event) {
   form.reset();
   render();
   toast(`已加入：${name}`);
+}
+
+async function handleCoverUpload(event) {
+  const input = event.target;
+  const dishId = input.dataset.dish;
+  const file = input.files?.[0];
+  if (!dishId || !file) return;
+
+  try {
+    const image = await compressImageFile(file);
+    state.dishes = state.dishes.map((dish) => (dish.id === dishId ? { ...dish, image } : dish));
+    saveState();
+    render();
+    toast("封面已更新");
+  } catch (error) {
+    toast(error.message || "图片处理失败");
+  }
+}
+
+function compressImageFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) {
+      reject(new Error("请选择图片文件"));
+      return;
+    }
+
+    if (file.size > 12 * 1024 * 1024) {
+      reject(new Error("图片不能超过 12MB"));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("图片解析失败"));
+      image.onload = () => {
+        const maxSide = 1200;
+        const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
+        const width = Math.max(1, Math.round(image.width * ratio));
+        const height = Math.max(1, Math.round(image.height * ratio));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(image, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.78));
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function parseIngredients(text) {
@@ -1579,6 +1685,10 @@ function escapeHtml(value) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function escapeSvg(value) {
+  return escapeHtml(value).replaceAll('"', "&quot;");
 }
 
 function toast(message) {
@@ -1654,11 +1764,19 @@ app.addEventListener("input", (event) => {
 });
 
 app.addEventListener("submit", (event) => {
-  if (event.target.matches("[data-role='dish-form']")) handleFormSubmit(event);
+  if (event.target.matches("[data-role='dish-form']")) {
+    handleFormSubmit(event).catch((error) => toast(error.message || "保存失败"));
+  }
   if (event.target.matches("[data-role='household-form']")) {
     event.preventDefault();
     const data = new FormData(event.target);
     joinHousehold(String(data.get("householdCode") || ""));
+  }
+});
+
+app.addEventListener("change", (event) => {
+  if (event.target.matches("[data-role='cover-upload']")) {
+    handleCoverUpload(event);
   }
 });
 
