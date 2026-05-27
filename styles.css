@@ -293,6 +293,11 @@ img {
   width: 100%;
 }
 
+.button.mini-button {
+  min-height: 40px;
+  padding: 0 10px;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -836,6 +841,11 @@ img {
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
+}
+
+.menu-item-actions {
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .menu-list {

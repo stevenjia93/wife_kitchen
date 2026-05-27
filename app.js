@@ -207,6 +207,7 @@ let ui = {
   menuMode: "browse",
   menuCategory: "全部",
   menuSearch: "",
+  editingDishId: null,
   detailDishId: null
 };
 
@@ -1106,7 +1107,7 @@ function renderWifeOrderItem(meal, id) {
           <small>${dish.time} 分钟 · ${escapeHtml(dish.note || dish.difficulty)}</small>
         </div>
         <div class="item-actions">
-          <button class="icon-button" title="查看详情" aria-label="查看 ${escapeAttr(dish.name)}" data-action="view-detail" data-dish="${dish.id}">?</button>
+          <button class="icon-button" title="查看详情" aria-label="查看 ${escapeAttr(dish.name)}" data-action="view-detail" data-dish="${dish.id}">看</button>
           ${readOnly ? "" : `<button class="icon-button" title="移除" aria-label="移除 ${escapeAttr(dish.name)}" data-action="remove-dish" data-meal="${meal}" data-dish="${id}">×</button>`}
         </div>
       </div>
@@ -1426,13 +1427,14 @@ function renderMenuDrawer() {
   if (!ui.menuDrawerOpen) return "";
   const dishes = activeDishes();
   const filtered = filteredMenuDishes();
+  const editingDish = ui.editingDishId ? getDish(ui.editingDishId) : null;
   return `
     <div class="menu-drawer-backdrop" data-role="menu-drawer-backdrop">
       <aside class="menu-drawer" role="dialog" aria-modal="true" aria-label="我的菜单管理">
         <header class="drawer-header">
           <div>
             <h2>我的菜单</h2>
-            <p>${ui.menuMode === "browse" ? `${filtered.length}/${dishes.length} 道` : "录入一道会做的菜"}</p>
+            <p>${ui.menuMode === "browse" ? `${filtered.length}/${dishes.length} 道` : editingDish ? `编辑：${escapeHtml(editingDish.name)}` : "录入一道会做的菜"}</p>
           </div>
           <button class="icon-button" data-action="close-menu-drawer" aria-label="关闭菜单">×</button>
         </header>
@@ -1441,7 +1443,7 @@ function renderMenuDrawer() {
           <button class="${ui.menuMode === "form" ? "active" : ""}" data-action="set-menu-mode" data-mode="form">录入</button>
         </div>
         <div class="drawer-body">
-          ${ui.menuMode === "form" ? renderRecipeForm() : renderMenuBrowser(filtered, dishes)}
+          ${ui.menuMode === "form" ? renderRecipeForm(editingDish) : renderMenuBrowser(filtered, dishes)}
         </div>
       </aside>
     </div>
@@ -1488,27 +1490,32 @@ function renderMenuListItem(dish) {
         <strong>${escapeHtml(dish.name)}</strong>
         <small>${escapeHtml(dish.category)} · ${dish.time} 分钟 · ${dish.meals.map((meal) => mealLabels[meal]).join("/")}</small>
       </div>
-      <div class="item-actions">
-        <button class="icon-button" title="查看详情" aria-label="查看 ${escapeAttr(dish.name)}" data-action="view-detail" data-dish="${dish.id}">?</button>
+      <div class="item-actions menu-item-actions">
+        <button class="button mini-button" title="查看详情" aria-label="查看 ${escapeAttr(dish.name)}" data-action="view-detail" data-dish="${dish.id}">查看</button>
+        <button class="button mini-button" title="编辑菜谱" aria-label="编辑 ${escapeAttr(dish.name)}" data-action="edit-dish" data-dish="${dish.id}">编辑</button>
         <button class="icon-button danger" title="从我的菜单移除" aria-label="移除 ${escapeAttr(dish.name)}" data-action="remove-menu-dish" data-dish="${dish.id}">×</button>
       </div>
     </li>
   `;
 }
 
-function renderRecipeForm() {
+function renderRecipeForm(editingDish = null) {
+  const isEditing = Boolean(editingDish);
+  const ingredientValue = isEditing ? editingDish.ingredients.map(formatIngredient).join("\n") : "";
+  const stepValue = isEditing && Array.isArray(editingDish.steps) ? editingDish.steps.join("\n") : "";
+  const selectedMeals = isEditing ? editingDish.meals : [ui.meal];
   return `
-    <form class="form-grid" data-role="dish-form">
+    <form class="form-grid" data-role="dish-form" ${isEditing ? `data-edit-dish="${escapeAttr(editingDish.id)}"` : ""}>
       <div class="form-field">
         <label for="dish-name">菜名</label>
-        <input id="dish-name" name="name" required placeholder="比如：青椒肉丝" />
+        <input id="dish-name" name="name" required placeholder="比如：青椒肉丝" value="${escapeAttr(editingDish?.name || "")}" />
       </div>
       <div class="form-field">
         <label for="dish-category">分类</label>
         <select id="dish-category" name="category">
           ${categories
             .filter((category) => category !== "全部")
-            .map((category) => `<option>${category}</option>`)
+            .map((category) => `<option ${editingDish?.category === category ? "selected" : ""}>${category}</option>`)
             .join("")}
         </select>
       </div>
@@ -1519,7 +1526,7 @@ function renderRecipeForm() {
             .map(
               (meal) => `
                 <label class="checkbox-pill">
-                  <input type="checkbox" name="meals" value="${meal}" ${meal === ui.meal ? "checked" : ""} />
+                  <input type="checkbox" name="meals" value="${meal}" ${selectedMeals.includes(meal) ? "checked" : ""} />
                   ${mealLabels[meal]}
                 </label>
               `
@@ -1529,24 +1536,34 @@ function renderRecipeForm() {
       </div>
       <div class="form-field">
         <label for="dish-time">预计时间</label>
-        <input id="dish-time" name="time" type="number" min="5" value="20" />
+        <input id="dish-time" name="time" type="number" min="5" value="${editingDish?.time || 20}" />
       </div>
       <div class="form-field">
         <label for="dish-ingredients">食材</label>
-        <textarea id="dish-ingredients" name="ingredients" required placeholder="鸡蛋 3 个&#10;番茄 2 个&#10;小葱 1 根"></textarea>
+        <textarea id="dish-ingredients" name="ingredients" required placeholder="鸡蛋 3 个&#10;番茄 2 个&#10;小葱 1 根">${escapeHtml(ingredientValue)}</textarea>
       </div>
       <div class="form-field">
         <label for="dish-steps">简单做法</label>
-        <textarea id="dish-steps" name="steps" placeholder="每行一步：切配食材&#10;先炒主料&#10;调味出锅"></textarea>
+        <textarea id="dish-steps" name="steps" placeholder="每行一步：切配食材&#10;先炒主料&#10;调味出锅">${escapeHtml(stepValue)}</textarea>
       </div>
       <div class="form-field">
         <label for="dish-source">下厨房链接</label>
         <div class="source-import-row">
-          <input id="dish-source" name="sourceUrl" type="url" placeholder="https://www.xiachufang.com/recipe/..." />
+          <input id="dish-source" name="sourceUrl" type="url" placeholder="https://www.xiachufang.com/recipe/..." value="${escapeAttr(editingDish?.sourceUrl || "")}" />
           <button class="button" type="button" data-action="import-recipe-link">链接导入</button>
         </div>
-        <input name="imageUrl" type="hidden" data-role="imported-image" />
-        <div class="import-cover-preview" data-role="import-cover-preview" hidden></div>
+        <input name="imageUrl" type="hidden" data-role="imported-image" value="${escapeAttr(editingDish?.image || "")}" />
+        <div class="import-cover-preview" data-role="import-cover-preview" ${editingDish?.image ? "" : "hidden"}>
+          ${
+            editingDish?.image
+              ? `<img src="${escapeAttr(dishImageSrc(editingDish))}" alt="当前封面" />
+                 <div>
+                   <strong>当前封面</strong>
+                   <span>导入链接或上传图片后会替换。</span>
+                 </div>`
+              : ""
+          }
+        </div>
       </div>
       <div class="form-field">
         <label for="dish-image">封面图</label>
@@ -1554,9 +1571,9 @@ function renderRecipeForm() {
       </div>
       <div class="form-field">
         <label for="dish-note">备注</label>
-        <textarea id="dish-note" name="note" placeholder="关键火候、老婆偏好、下次改进"></textarea>
+        <textarea id="dish-note" name="note" placeholder="关键火候、老婆偏好、下次改进">${escapeHtml(editingDish?.note || "")}</textarea>
       </div>
-      <button class="button primary" type="submit">保存到菜单</button>
+      <button class="button primary" type="submit">${isEditing ? "保存修改" : "保存到菜单"}</button>
     </form>
   `;
 }
@@ -1593,7 +1610,8 @@ function renderDetailModal() {
           <a class="button primary wide" href="${escapeAttr(dishSourceUrl(dish))}" target="_blank" rel="noreferrer">打开下厨房参考</a>
           ${
             ui.view === "husband"
-              ? `<label class="button wide file-button">
+              ? `<button class="button wide" data-action="edit-dish" data-dish="${dish.id}">编辑菜谱</button>
+                <label class="button wide file-button">
                   更换封面
                   <input type="file" accept="image/*" data-role="cover-upload" data-dish="${dish.id}" />
                 </label>`
@@ -1808,6 +1826,16 @@ function findWishLocation(wishId, preferredDateKey = selectedDateKey()) {
   return null;
 }
 
+function editDish(dishId) {
+  const dish = getDish(dishId);
+  if (!dish) return;
+  ui.menuDrawerOpen = true;
+  ui.menuMode = "form";
+  ui.editingDishId = dishId;
+  ui.detailDishId = null;
+  render();
+}
+
 function removeDishFromMenu(dishId) {
   const dish = getDish(dishId);
   if (!dish) return;
@@ -1991,6 +2019,8 @@ async function handleFormSubmit(event) {
   event.preventDefault();
   const form = event.target;
   const data = new FormData(form);
+  const editingDishId = form.dataset.editDish || "";
+  const existingDish = editingDishId ? getDish(editingDishId) : null;
   const name = String(data.get("name") || "").trim();
   const selectedMeals = data.getAll("meals");
   const ingredients = parseIngredients(String(data.get("ingredients") || ""));
@@ -2010,30 +2040,35 @@ async function handleFormSubmit(event) {
   const imageDataUrl = imageFile instanceof File && imageFile.size ? await compressImageFile(imageFile) : "";
 
   const dish = {
-    id: `dish-${Date.now()}`,
+    id: existingDish?.id || `dish-${Date.now()}`,
     name,
     category: String(data.get("category") || "快手菜"),
     meals: selectedMeals,
     time: Math.max(5, Number(data.get("time")) || 20),
-    difficulty: "自家菜",
-    rating: 4,
-    image: imageDataUrl || importedImageUrl,
+    difficulty: existingDish?.difficulty || "自家菜",
+    rating: existingDish?.rating || 4,
+    image: imageDataUrl || importedImageUrl || existingDish?.image || "",
     ingredients,
     steps,
     sourceUrl,
-    note: String(data.get("note") || "").trim() || "新加入的家常菜。"
+    note: String(data.get("note") || "").trim() || (existingDish ? "" : "新加入的家常菜。")
   };
 
-  state.dishes = [dish, ...state.dishes];
+  if (existingDish) {
+    state.dishes = state.dishes.map((item) => (item.id === existingDish.id ? { ...existingDish, ...dish } : item));
+  } else {
+    state.dishes = [dish, ...state.dishes];
+  }
   saveState();
   ui.category = "全部";
   ui.search = "";
   ui.menuMode = "browse";
+  ui.editingDishId = null;
   ui.menuCategory = "全部";
   ui.menuSearch = "";
   form.reset();
   render();
-  toast(`已加入：${name}`);
+  toast(existingDish ? `已更新：${name}` : `已加入：${name}`);
 }
 
 async function importRecipeFromLink(button) {
@@ -2265,6 +2300,7 @@ app.addEventListener("click", (event) => {
   if (action === "refresh-wish") refreshWish(actionTarget.dataset.wish);
   if (action === "decline-wish") declineWish(actionTarget.dataset.wish);
   if (action === "accept-wish") acceptWish(actionTarget.dataset.wish);
+  if (action === "edit-dish") editDish(actionTarget.dataset.dish);
   if (action === "remove-menu-dish") removeDishFromMenu(actionTarget.dataset.dish);
   if (action === "random") randomDish();
   if (action === "clear-today") clearToday();
@@ -2286,14 +2322,17 @@ app.addEventListener("click", (event) => {
   if (action === "open-menu-drawer") {
     ui.menuDrawerOpen = true;
     ui.menuMode = "browse";
+    ui.editingDishId = null;
     render();
   }
   if (action === "close-menu-drawer") {
     ui.menuDrawerOpen = false;
+    ui.editingDishId = null;
     render();
   }
   if (action === "set-menu-mode") {
     ui.menuMode = actionTarget.dataset.mode === "form" ? "form" : "browse";
+    ui.editingDishId = null;
     render();
   }
   if (action === "set-menu-category") {
