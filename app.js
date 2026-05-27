@@ -693,8 +693,90 @@ function dishSourceUrl(dish) {
   return dish.sourceUrl || `https://www.xiachufang.com/search/?keyword=${encodeURIComponent(dish.name)}`;
 }
 
+function normalizeStepItem(step) {
+  if (typeof step === "string") {
+    return { text: step.trim(), image: "", imageUrl: "" };
+  }
+  if (step && typeof step === "object") {
+    return {
+      text: String(step.text || step.name || "").trim(),
+      image: String(step.image || "").trim(),
+      imageUrl: String(step.imageUrl || "").trim()
+    };
+  }
+  return { text: "", image: "", imageUrl: "" };
+}
+
+function dishStepItems(dish, includeFallback = true) {
+  const rawSteps =
+    Array.isArray(dish?.stepDetails) && dish.stepDetails.length
+      ? dish.stepDetails
+      : Array.isArray(dish?.steps)
+        ? dish.steps
+        : [];
+  const steps = rawSteps.map(normalizeStepItem).filter((step) => step.text || step.image || step.imageUrl);
+  if (steps.length || !includeFallback) return steps;
+  return [{ text: dish?.note || "按家里习惯处理食材，先把主料做熟，再按口味调味。", image: "", imageUrl: "" }];
+}
+
 function dishSteps(dish) {
-  return Array.isArray(dish.steps) && dish.steps.length ? dish.steps : [dish.note || "按家里习惯处理食材，先把主料做熟，再按口味调味。"];
+  return dishStepItems(dish).map((step) => step.text).filter(Boolean);
+}
+
+function stepImageSrc(step) {
+  return step.image || "";
+}
+
+function stepImageCount(steps) {
+  return steps.filter((step) => stepImageSrc(step)).length;
+}
+
+function renderStepTextList(steps, limit = 5, emptyText = "打开下厨房查看完整步骤。") {
+  const lines = steps.map((step) => step.text).filter(Boolean).slice(0, limit);
+  return `<ol>${lines.length ? lines.map((step) => `<li>${escapeHtml(step)}</li>`).join("") : `<li>${escapeHtml(emptyText)}</li>`}</ol>`;
+}
+
+function renderStepTimeline(steps) {
+  const items = steps.length ? steps : [{ text: "打开下厨房查看完整步骤。", image: "", imageUrl: "" }];
+  return `
+    <ol class="step-note-list">
+      ${items
+        .map((step, index) => {
+          const image = stepImageSrc(step);
+          return `
+            <li class="step-note-item">
+              <span class="step-note-index">${index + 1}</span>
+              <div class="step-note-body">
+                ${image ? `<img class="step-note-image" src="${escapeAttr(image)}" alt="步骤 ${index + 1}" loading="lazy" />` : ""}
+                ${step.text ? `<p>${escapeHtml(step.text)}</p>` : ""}
+              </div>
+            </li>
+          `;
+        })
+        .join("")}
+    </ol>
+  `;
+}
+
+function serializeStepDetails(steps) {
+  return JSON.stringify(steps.map(normalizeStepItem).filter((step) => step.text || step.image || step.imageUrl));
+}
+
+function parseStepDetails(value) {
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    return Array.isArray(parsed) ? parsed.map(normalizeStepItem).filter((step) => step.text || step.image || step.imageUrl) : [];
+  } catch {
+    return [];
+  }
+}
+
+function mergeStepTextsWithDetails(texts, details) {
+  return texts.map((text, index) => {
+    const detail = normalizeStepItem(details[index]);
+    const step = { text, image: detail.image, imageUrl: detail.imageUrl };
+    return step.image || step.imageUrl ? step : step.text;
+  });
 }
 
 function dishImageSrc(dish) {
@@ -1220,6 +1302,8 @@ function renderHusbandMealBlock(plan, meal) {
 function renderCookDishCard(meal, id) {
   const dish = getDish(id);
   if (!dish) return "";
+  const steps = dishStepItems(dish);
+  const imageSteps = stepImageCount(steps);
   return `
     <article class="cook-card">
       <img src="${escapeAttr(dishImageSrc(dish))}" alt="${escapeAttr(dish.name)}" loading="lazy" />
@@ -1232,6 +1316,7 @@ function renderCookDishCard(meal, id) {
           <span class="meta">${dish.time} 分钟</span>
           <span class="meta">${escapeHtml(dish.difficulty)}</span>
           <span class="meta">${escapeHtml(dish.category)}</span>
+          ${imageSteps ? `<span class="meta">步骤图 ${imageSteps}</span>` : ""}
         </div>
         <p class="cook-note">${escapeHtml(dish.note || "简单处理食材，按家里口味调味。")}</p>
         <div class="mini-section">
@@ -1240,7 +1325,7 @@ function renderCookDishCard(meal, id) {
         </div>
         <div class="mini-section">
           <strong>简单做法</strong>
-          <ol>${dishSteps(dish).map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
+          ${renderStepTextList(steps, 5, "打开下厨房查看完整步骤。")}
         </div>
         <div class="dish-actions">
           <a class="button" href="${escapeAttr(dishSourceUrl(dish))}" target="_blank" rel="noreferrer">下厨房</a>
@@ -1260,7 +1345,8 @@ function renderWishCookCard(wish) {
   };
   const sourceUrl = recipe.sourceUrl || "";
   const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
-  const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
+  const steps = dishStepItems(recipe, false);
+  const imageSteps = stepImageCount(steps);
   const isBusy = wish.status === "searching";
   const hasRecipe = Boolean(recipe.name || sourceUrl);
   return `
@@ -1276,6 +1362,7 @@ function renderWishCookCard(wish) {
           <span class="meta">老婆许愿</span>
           ${recipe.searchRating ? `<span class="meta">评分 ${recipe.searchRating}</span>` : ""}
           ${recipe.searchCookedCount ? `<span class="meta">${recipe.searchCookedCount} 人做过</span>` : ""}
+          ${imageSteps ? `<span class="meta">步骤图 ${imageSteps}</span>` : ""}
         </div>
         <p class="cook-note">${escapeHtml(wish.note || "菜单外想吃的菜，先给老公一份参考做法。")}</p>
         ${
@@ -1293,7 +1380,7 @@ function renderWishCookCard(wish) {
                 </div>
                 <div class="mini-section">
                   <strong>做法参考</strong>
-                  <ol>${steps.length ? steps.slice(0, 5).map((step) => `<li>${escapeHtml(step)}</li>`).join("") : "<li>打开下厨房查看完整步骤。</li>"}</ol>
+                  ${renderStepTextList(steps, 5, "打开下厨房查看完整步骤。")}
                 </div>
               `
               : `<div class="empty-state compact">${escapeHtml(wish.error || "暂时没找到参考菜谱。")}</div>`
@@ -1502,7 +1589,8 @@ function renderMenuListItem(dish) {
 function renderRecipeForm(editingDish = null) {
   const isEditing = Boolean(editingDish);
   const ingredientValue = isEditing ? editingDish.ingredients.map(formatIngredient).join("\n") : "";
-  const stepValue = isEditing && Array.isArray(editingDish.steps) ? editingDish.steps.join("\n") : "";
+  const existingSteps = isEditing ? dishStepItems(editingDish, false) : [];
+  const stepValue = existingSteps.map((step) => step.text).filter(Boolean).join("\n");
   const selectedMeals = isEditing ? editingDish.meals : [ui.meal];
   return `
     <form class="form-grid" data-role="dish-form" ${isEditing ? `data-edit-dish="${escapeAttr(editingDish.id)}"` : ""}>
@@ -1553,6 +1641,7 @@ function renderRecipeForm(editingDish = null) {
           <button class="button" type="button" data-action="import-recipe-link">链接导入</button>
         </div>
         <input name="imageUrl" type="hidden" data-role="imported-image" value="${escapeAttr(editingDish?.image || "")}" />
+        <textarea name="stepDetails" data-role="imported-steps" hidden>${escapeHtml(serializeStepDetails(existingSteps))}</textarea>
         <div class="import-cover-preview" data-role="import-cover-preview" ${editingDish?.image ? "" : "hidden"}>
           ${
             editingDish?.image
@@ -1581,6 +1670,7 @@ function renderRecipeForm(editingDish = null) {
 function renderDetailModal() {
   const dish = ui.detailDishId ? getDish(ui.detailDishId) : null;
   if (!dish) return "";
+  const steps = dishStepItems(dish);
   return `
     <div class="detail-backdrop" data-role="detail-backdrop">
       <section class="detail-sheet" role="dialog" aria-modal="true" aria-label="${escapeAttr(dish.name)}详情">
@@ -1605,7 +1695,7 @@ function renderDetailModal() {
           </div>
           <div class="mini-section">
             <strong>简单做法</strong>
-            <ol>${dishSteps(dish).map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
+            ${renderStepTimeline(steps)}
           </div>
           <a class="button primary wide" href="${escapeAttr(dishSourceUrl(dish))}" target="_blank" rel="noreferrer">打开下厨房参考</a>
           ${
@@ -1796,7 +1886,7 @@ function acceptWish(wishId) {
 function createDishFromWish(wish) {
   const recipe = wish.recipe || {};
   const ingredientLines = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
-  const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
+  const steps = dishStepItems(recipe, false);
   const name = recipe.name || wish.name;
   return {
     id: `dish-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -2024,10 +2114,13 @@ async function handleFormSubmit(event) {
   const name = String(data.get("name") || "").trim();
   const selectedMeals = data.getAll("meals");
   const ingredients = parseIngredients(String(data.get("ingredients") || ""));
-  const steps = String(data.get("steps") || "")
+  const stepTexts = String(data.get("steps") || "")
     .split("\n")
     .map((step) => step.trim())
     .filter(Boolean);
+  const storedStepDetails = parseStepDetails(data.get("stepDetails"));
+  const previousStepDetails = storedStepDetails.length ? storedStepDetails : dishStepItems(existingDish, false);
+  const steps = mergeStepTextsWithDetails(stepTexts, previousStepDetails);
   const sourceUrl = String(data.get("sourceUrl") || "").trim();
   const importedImageUrl = String(data.get("imageUrl") || "").trim();
 
@@ -2107,13 +2200,16 @@ async function importRecipeFromLink(button) {
 
 function applyImportedRecipe(form, recipe) {
   const ingredientLines = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
-  const stepLines = Array.isArray(recipe.steps) ? recipe.steps : [];
+  const stepItems = dishStepItems(recipe, false);
+  const stepLines = stepItems.map((step) => step.text).filter(Boolean);
 
   if (recipe.name) form.elements.name.value = recipe.name;
   if (recipe.sourceUrl) form.elements.sourceUrl.value = recipe.sourceUrl;
   if (recipe.time) form.elements.time.value = Math.max(5, Number(recipe.time) || 20);
   if (ingredientLines.length) form.elements.ingredients.value = ingredientLines.join("\n");
   if (stepLines.length) form.elements.steps.value = stepLines.join("\n");
+  const stepDetailsField = form.querySelector("[data-role='imported-steps']");
+  if (stepDetailsField) stepDetailsField.value = serializeStepDetails(stepItems);
   if (recipe.note) form.elements.note.value = recipe.note;
   if (recipe.image) {
     form.querySelector("[data-role='imported-image']").value = recipe.image;

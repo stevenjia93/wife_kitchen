@@ -1,5 +1,8 @@
 const MAX_HTML_CHARS = 1_500_000;
 const MAX_IMAGE_BYTES = 700_000;
+const MAX_STEP_IMAGE_BYTES = 220_000;
+const MAX_STEP_IMAGES = 20;
+const MAX_STEP_ITEMS = 20;
 const USER_AGENT =
   "Mozilla/5.0 (compatible; WifeKitchenRecipeImporter/1.0; +https://wifekitchen.vercel.app)";
 
@@ -44,6 +47,19 @@ async function importRecipeFromUrl(rawUrl) {
   if (recipe.image) {
     recipe.imageUrl = recipe.image;
     recipe.image = await fetchImageDataUrl(recipe.image, sourceUrl);
+  }
+  if (Array.isArray(recipe.stepDetails)) {
+    for (let index = 0; index < recipe.stepDetails.length; index += 1) {
+      const step = recipe.stepDetails[index];
+      if (!step?.image) continue;
+      const originalImage = step.image;
+      step.imageUrl = originalImage;
+      if (index < MAX_STEP_IMAGES) {
+        step.image = await fetchImageDataUrl(resizeXiachufangImageUrl(originalImage), sourceUrl, MAX_STEP_IMAGE_BYTES);
+      } else {
+        step.image = "";
+      }
+    }
   }
   return recipe;
 }
@@ -107,7 +123,9 @@ function parseRecipePage(html, sourceUrl) {
   );
   const description = firstText(recipeJson?.description) || metadata["og:description"] || "";
   const ingredients = normalizeLines(recipeJson?.recipeIngredient);
-  const steps = normalizeInstructions(recipeJson?.recipeInstructions);
+  const jsonSteps = normalizeInstructions(recipeJson?.recipeInstructions);
+  const stepDetails = mergeStepDetails(extractStepDetails(html, sourceUrl), jsonSteps);
+  const steps = stepDetails.length ? stepDetails.map((step) => step.text).filter(Boolean) : jsonSteps;
   const image = absoluteUrl(firstText(recipeJson?.image) || metadata["og:image"] || "", sourceUrl);
   const totalTime = parseDurationMinutes(firstText(recipeJson?.totalTime) || firstText(recipeJson?.cookTime));
 
@@ -118,11 +136,12 @@ function parseRecipePage(html, sourceUrl) {
     time: totalTime || 20,
     ingredients,
     steps,
+    stepDetails,
     note: cleanText(description).slice(0, 120)
   };
 }
 
-async function fetchImageDataUrl(imageUrl, refererUrl) {
+async function fetchImageDataUrl(imageUrl, refererUrl, maxBytes = MAX_IMAGE_BYTES) {
   try {
     const response = await fetch(imageUrl, {
       headers: {
@@ -137,7 +156,7 @@ async function fetchImageDataUrl(imageUrl, refererUrl) {
     if (!contentType.startsWith("image/")) return "";
 
     const buffer = Buffer.from(await response.arrayBuffer());
-    if (!buffer.length || buffer.length > MAX_IMAGE_BYTES) return "";
+    if (!buffer.length || buffer.length > maxBytes) return "";
 
     return `data:${contentType.split(";")[0]};base64,${buffer.toString("base64")}`;
   } catch {
@@ -202,7 +221,53 @@ function normalizeInstructions(value) {
     .flatMap((item) => splitInstructionText(firstText(item)))
     .map(cleanStepText)
     .filter(Boolean)
-    .slice(0, 20);
+    .slice(0, MAX_STEP_ITEMS);
+}
+
+function extractStepDetails(html, sourceUrl) {
+  const section = extractStepsSection(html);
+  if (!section) return [];
+
+  const blocks =
+    section.match(/<div\b[^>]*class=["'][^"']*\bstep\s+step\b[^"']*["'][\s\S]*?(?=<div\b[^>]*class=["'][^"']*\bstep\s+step\b|<\/section>)/gi) ||
+    [];
+
+  return blocks
+    .map((block) => {
+      const rawText = firstMatch(
+        block,
+        /<p\b[^>]*class=["'][^"']*\bstep-text\b[^"']*["'][^>]*>([\s\S]*?)<\/p>/i
+      );
+      const imageTag = firstMatch(block, /(<img\b[^>]*>)/i);
+      const styleImage = firstMatch(block, /background-image:\s*url\((['"]?)(.*?)\1\)/i, 2);
+      const rawImage = attr(imageTag, "src") || attr(imageTag, "data-src") || styleImage;
+      const text = cleanStepText(stripTags(rawText).replace(/<br\s*\/?>/gi, "\n"));
+      const image = absoluteUrl(decodeHtml(rawImage), sourceUrl);
+      return { text, image };
+    })
+    .filter((step) => step.text || step.image)
+    .slice(0, MAX_STEP_ITEMS);
+}
+
+function extractStepsSection(html) {
+  const startMatch = html.match(/<section\b[^>]*id=["']steps["'][^>]*>/i);
+  if (!startMatch || startMatch.index === undefined) return "";
+  const start = startMatch.index;
+  const end = html.indexOf("</section>", start + startMatch[0].length);
+  return end === -1 ? html.slice(start) : html.slice(start, end + "</section>".length);
+}
+
+function mergeStepDetails(domSteps, jsonSteps) {
+  if (Array.isArray(domSteps) && domSteps.length) {
+    return domSteps
+      .map((step, index) => ({
+        text: step.text || jsonSteps[index] || "",
+        image: step.image || ""
+      }))
+      .filter((step) => step.text || step.image)
+      .slice(0, MAX_STEP_ITEMS);
+  }
+  return (jsonSteps || []).map((text) => ({ text, image: "" })).slice(0, MAX_STEP_ITEMS);
 }
 
 function flattenInstructions(value) {
@@ -261,6 +326,10 @@ function cleanStepText(value) {
   return cleanText(value).replace(/[，,]\s*$/g, "");
 }
 
+function stripTags(value) {
+  return decodeHtml(String(value || "").replace(/<[^>]+>/g, " "));
+}
+
 function absoluteUrl(value, baseUrl) {
   if (!value) return "";
   try {
@@ -271,8 +340,18 @@ function absoluteUrl(value, baseUrl) {
 }
 
 function attr(tag, name) {
+  if (!tag) return "";
   const match = tag.match(new RegExp(`${name}=["']([^"']+)["']`, "i"));
   return match ? match[1] : "";
+}
+
+function firstMatch(value, pattern, group = 1) {
+  const match = String(value || "").match(pattern);
+  return match ? match[group] || "" : "";
+}
+
+function resizeXiachufangImageUrl(imageUrl) {
+  return String(imageUrl || "").replace(/\/w\/\d+\/h\/\d+\/q\/\d+\/format\/\w+/i, "/w/520/h/390/q/72/format/jpg");
 }
 
 function decodeHtml(value) {
@@ -297,5 +376,6 @@ module.exports._internals = {
   importRecipeFromUrl,
   parseRecipePage,
   normalizeSourceUrl,
-  fetchImageDataUrl
+  fetchImageDataUrl,
+  extractStepDetails
 };
