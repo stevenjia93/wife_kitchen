@@ -906,6 +906,162 @@ img {
   background: rgba(183, 130, 35, 0.07);
 }
 
+.after-meal-panel {
+  overflow: hidden;
+}
+
+.photo-count {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--leaf);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.photo-uploader {
+  display: grid;
+  gap: 8px;
+}
+
+.photo-target-field {
+  display: grid;
+  gap: 6px;
+}
+
+.photo-target-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 830;
+}
+
+.photo-target-field select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 0 10px;
+  outline: none;
+}
+
+.photo-upload-card {
+  display: grid;
+  min-height: 92px;
+  place-items: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(216, 74, 43, 0.08), rgba(36, 122, 98, 0.08)),
+    #fbfcfa;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 14px;
+  text-align: center;
+}
+
+.photo-upload-card:hover {
+  border-color: var(--leaf);
+}
+
+.photo-upload-card input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.photo-upload-card strong,
+.photo-upload-card span {
+  display: block;
+}
+
+.photo-upload-card strong {
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.photo-upload-card span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.meal-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.meal-photo-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.meal-photo-card > img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--surface-soft);
+}
+
+.meal-photo-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 9px 0;
+}
+
+.meal-photo-meta strong,
+.meal-photo-meta small {
+  display: block;
+}
+
+.meal-photo-meta strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meal-photo-meta small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.meal-photo-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px 9px 10px;
+}
+
+.meal-photo-tags span {
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 780;
+  padding: 4px 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .menu-summary-panel .panel-body {
   gap: 10px;
 }
@@ -1581,6 +1737,10 @@ img {
 
   .history-dish-card img {
     height: 168px;
+  }
+
+  .meal-photo-grid {
+    grid-template-columns: 1fr;
   }
 
   .decision-row,

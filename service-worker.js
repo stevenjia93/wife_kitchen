@@ -1,4 +1,4 @@
-const CACHE_NAME = "wife-kitchen-v10";
+const CACHE_NAME = "wife-kitchen-v11";
 const CORE_ASSETS = [
   "./",
   "./index.html",

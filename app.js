@@ -2,6 +2,7 @@ const STORAGE_KEY = "wife-kitchen-prototype-v1";
 const HOUSEHOLD_SESSION_KEY = "wife-kitchen-household-session-v1";
 const SUPABASE_CDN = "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_CONFIG = window.WIFE_KITCHEN_CONFIG || {};
+const MEAL_PHOTO_LIMIT = 12;
 
 const online = {
   enabled: Boolean(SUPABASE_CONFIG.supabaseUrl && SUPABASE_CONFIG.supabaseAnonKey),
@@ -276,6 +277,7 @@ function emptyPlan() {
       dinner: false
     },
     wishes: [],
+    afterPhotos: [],
     submitted: false,
     submittedAt: null,
     notificationUnread: false
@@ -300,10 +302,29 @@ function normalizePlan(plan = {}) {
   normalized.wishes = Array.isArray(normalized.wishes)
     ? normalized.wishes.map(normalizeWish).filter(Boolean)
     : [];
+  normalized.afterPhotos = Array.isArray(normalized.afterPhotos)
+    ? normalized.afterPhotos.map(normalizeMealPhoto).filter(Boolean)
+    : [];
   normalized.submitted = Boolean(normalized.submitted);
   normalized.submittedAt = normalized.submittedAt || null;
   normalized.notificationUnread = Boolean(normalized.notificationUnread);
   return normalized;
+}
+
+function normalizeMealPhoto(photo = {}) {
+  const image = String(photo.image || "").trim();
+  if (!image) return null;
+  const targetKeys = Array.isArray(photo.targetKeys)
+    ? photo.targetKeys.map(String).filter(Boolean)
+    : Array.isArray(photo.dishIds)
+      ? photo.dishIds.map((id) => `dish:${id}`).filter(Boolean)
+      : [];
+  return {
+    id: photo.id || `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    image,
+    targetKeys,
+    createdAt: photo.createdAt || new Date().toISOString()
+  };
 }
 
 function normalizeWish(wish = {}) {
@@ -693,6 +714,60 @@ function dishSourceUrl(dish) {
   return dish.sourceUrl || `https://www.xiachufang.com/search/?keyword=${encodeURIComponent(dish.name)}`;
 }
 
+function planFoodTargets(plan) {
+  const targets = [];
+  for (const meal of mealOrder) {
+    for (const id of plan[meal] || []) {
+      const dish = getDish(id);
+      if (!dish) continue;
+      targets.push({
+        key: `dish:${id}`,
+        id,
+        type: "dish",
+        meal,
+        name: dish.name,
+        image: dishImageSrc(dish)
+      });
+    }
+    for (const wish of wishesForMeal(plan, meal)) {
+      targets.push({
+        key: `wish:${wish.id}`,
+        id: wish.id,
+        type: "wish",
+        meal,
+        name: wish.name,
+        image: wish.recipe?.image || fallbackDishImage({ name: wish.name, category: "许愿菜" })
+      });
+    }
+  }
+  return targets;
+}
+
+function planPhotos(plan) {
+  return Array.isArray(plan?.afterPhotos) ? plan.afterPhotos.map(normalizeMealPhoto).filter(Boolean) : [];
+}
+
+function afterMealPanelVisible(plan) {
+  return planPhotos(plan).length > 0 || canUploadMealPhotos(plan);
+}
+
+function canUploadMealPhotos(plan) {
+  return ui.view === "wife" && selectedDateKey() === todayKey() && canViewOrder(plan) && planFoodTargets(plan).length > 0;
+}
+
+function photoTargetName(targetKey, targets) {
+  return targets.find((target) => target.key === targetKey)?.name || "已移除菜品";
+}
+
+function photoTargetLabel(photo, targets) {
+  const targetKeys = photo.targetKeys || [];
+  if (!targetKeys.length) return "整桌合照";
+  if (targetKeys.length === targets.length && targets.length > 1) return "整桌合照";
+  const names = targetKeys.map((key) => photoTargetName(key, targets)).filter(Boolean);
+  if (names.length <= 2) return names.join("、") || "饭后照片";
+  return `${names.slice(0, 2).join("、")} 等 ${names.length} 道`;
+}
+
 function normalizeStepItem(step) {
   if (typeof step === "string") {
     return { text: step.trim(), image: "", imageUrl: "" };
@@ -998,6 +1073,7 @@ function renderWifeView(plan) {
 
       <aside class="side-column">
         ${renderWifeOrderPanel(plan)}
+        ${renderAfterMealPhotoPanel(plan)}
       </aside>
     </main>
   `;
@@ -1154,6 +1230,86 @@ function renderWifeOrderPanel(plan) {
   `;
 }
 
+function renderAfterMealPhotoPanel(plan) {
+  if (!afterMealPanelVisible(plan)) return "";
+  const photos = planPhotos(plan);
+  const targets = planFoodTargets(plan);
+  const canUpload = canUploadMealPhotos(plan);
+  return `
+    <section class="panel after-meal-panel" data-role="after-meal-panel">
+      <div class="panel-header">
+        <div>
+          <h2>饭后照片</h2>
+          <p>${photos.length ? `${photos.length} 张成品记录` : canUpload ? "拍一下今天做好的菜。" : "还没有上传照片。"}</p>
+        </div>
+        <span class="photo-count">${photos.length}</span>
+      </div>
+      <div class="panel-body">
+        ${
+          canUpload
+            ? `
+              <div class="photo-uploader">
+                <label class="photo-target-field">
+                  <span>照片归属</span>
+                  <select data-role="photo-target">
+                    <option value="all">整桌合照</option>
+                    ${targets
+                      .map(
+                        (target) => `
+                          <option value="${escapeAttr(target.key)}">${escapeHtml(mealLabels[target.meal])} · ${escapeHtml(target.name)}</option>
+                        `
+                      )
+                      .join("")}
+                  </select>
+                </label>
+                <label class="photo-upload-card">
+                  <input type="file" accept="image/*" capture="environment" multiple data-role="meal-photo-upload" />
+                  <strong>上传成品照</strong>
+                  <span>合照或单菜照都可以</span>
+                </label>
+              </div>
+            `
+            : photos.length
+              ? ""
+              : `<div class="empty-state compact">这天还没有饭后照片。</div>`
+        }
+        ${
+          photos.length
+            ? `<div class="meal-photo-grid">${photos.map((photo) => renderMealPhotoCard(photo, targets, canUpload)).join("")}</div>`
+            : ""
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderMealPhotoCard(photo, targets, canRemove = false) {
+  const targetKeys = photo.targetKeys || [];
+  const shownTargets = targetKeys.length ? targetKeys : targets.map((target) => target.key);
+  return `
+    <article class="meal-photo-card">
+      <img src="${escapeAttr(photo.image)}" alt="${escapeAttr(photoTargetLabel(photo, targets))}" loading="lazy" />
+      <div class="meal-photo-meta">
+        <div>
+          <strong>${escapeHtml(photoTargetLabel(photo, targets))}</strong>
+          <small>${formatTime(photo.createdAt)}</small>
+        </div>
+        ${
+          canRemove
+            ? `<button class="icon-button danger" title="删除照片" aria-label="删除饭后照片" data-action="remove-meal-photo" data-photo="${escapeAttr(photo.id)}">×</button>`
+            : ""
+        }
+      </div>
+      <div class="meal-photo-tags">
+        ${shownTargets
+          .slice(0, 4)
+          .map((key) => `<span>${escapeHtml(photoTargetName(key, targets))}</span>`)
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
 function renderWifeMealBlock(plan, meal) {
   const ids = plan[meal];
   const wishes = wishesForMeal(plan, meal);
@@ -1226,6 +1382,7 @@ function renderHusbandView(plan) {
     <main class="workspace husband-workspace">
       <section class="main-column">
         ${renderHusbandOrderPanel(plan)}
+        ${renderAfterMealPhotoPanel(plan)}
       </section>
       <aside class="side-column">
         ${renderNotificationPanel(plan)}
@@ -2022,6 +2179,69 @@ function submitOrder() {
   toast("已下单，老公厨房会收到提醒");
 }
 
+async function handleMealPhotoUpload(event) {
+  const input = event.target;
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+
+  const plan = ensureTodayPlan();
+  if (!canUploadMealPhotos(plan)) {
+    toast("今天确认下单后才能上传成品照");
+    input.value = "";
+    return;
+  }
+
+  const existingPhotos = planPhotos(plan);
+  const remaining = MEAL_PHOTO_LIMIT - existingPhotos.length;
+  if (remaining <= 0) {
+    toast(`这天最多保留 ${MEAL_PHOTO_LIMIT} 张照片`);
+    input.value = "";
+    return;
+  }
+
+  const panel = input.closest("[data-role='after-meal-panel']");
+  const targetValue = panel?.querySelector("[data-role='photo-target']")?.value || "all";
+  const targets = planFoodTargets(plan);
+  const targetKeys = targetValue === "all" ? targets.map((target) => target.key) : [targetValue];
+  const selectedFiles = files.slice(0, remaining);
+
+  try {
+    const photos = [];
+    for (const file of selectedFiles) {
+      const image = await compressImageFile(file, { maxSide: 1280, quality: 0.72 });
+      photos.push(
+        normalizeMealPhoto({
+          id: `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          image,
+          targetKeys,
+          createdAt: new Date().toISOString()
+        })
+      );
+    }
+    plan.afterPhotos = [...photos.filter(Boolean), ...existingPhotos].slice(0, MEAL_PHOTO_LIMIT);
+    saveState();
+    render();
+    toast(photos.length > 1 ? `已上传 ${photos.length} 张照片` : "照片已上传");
+  } catch (error) {
+    toast(error.message || "照片处理失败");
+  } finally {
+    input.value = "";
+  }
+}
+
+function removeMealPhoto(photoId) {
+  const plan = ensureTodayPlan();
+  if (!canUploadMealPhotos(plan)) {
+    toast("只有今天的老婆端可以删除照片");
+    return;
+  }
+  const before = planPhotos(plan);
+  plan.afterPhotos = before.filter((photo) => photo.id !== photoId);
+  saveState();
+  render();
+  toast("照片已删除");
+}
+
 function markNotificationRead() {
   const plan = ensureTodayPlan();
   plan.notificationUnread = false;
@@ -2262,7 +2482,7 @@ async function handleCoverUpload(event) {
   }
 }
 
-function compressImageFile(file) {
+function compressImageFile(file, options = {}) {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith("image/")) {
       reject(new Error("请选择图片文件"));
@@ -2280,7 +2500,8 @@ function compressImageFile(file) {
       const image = new Image();
       image.onerror = () => reject(new Error("图片解析失败"));
       image.onload = () => {
-        const maxSide = 1200;
+        const maxSide = options.maxSide || 1200;
+        const quality = options.quality || 0.78;
         const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
         const width = Math.max(1, Math.round(image.width * ratio));
         const height = Math.max(1, Math.round(image.height * ratio));
@@ -2291,7 +2512,7 @@ function compressImageFile(file) {
         context.fillStyle = "#fff";
         context.fillRect(0, 0, width, height);
         context.drawImage(image, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", 0.78));
+        resolve(canvas.toDataURL("image/jpeg", quality));
       };
       image.src = String(reader.result || "");
     };
@@ -2402,6 +2623,7 @@ app.addEventListener("click", (event) => {
   if (action === "clear-today") clearToday();
   if (action === "feedback") setFeedback(actionTarget.dataset.dish, actionTarget.dataset.value);
   if (action === "toggle-bought") toggleBought(actionTarget.dataset.key);
+  if (action === "remove-meal-photo") removeMealPhoto(actionTarget.dataset.photo);
   if (action === "copy-list") copyShoppingList();
   if (action === "import-recipe-link") importRecipeFromLink(actionTarget);
   if (action === "toggle-skip") toggleMealSkip(actionTarget.dataset.meal);
@@ -2469,6 +2691,9 @@ app.addEventListener("submit", (event) => {
 app.addEventListener("change", (event) => {
   if (event.target.matches("[data-role='cover-upload']")) {
     handleCoverUpload(event);
+  }
+  if (event.target.matches("[data-role='meal-photo-upload']")) {
+    handleMealPhotoUpload(event);
   }
 });
 
