@@ -27,6 +27,13 @@ const mealLabels = {
 
 const mealOrder = ["breakfast", "lunch", "dinner"];
 const categories = ["全部", "快手菜", "肉菜", "蔬菜", "汤粥", "早餐", "主食"];
+const wishStatuses = {
+  searching: "找菜谱中",
+  found: "已找到参考",
+  accepted: "老公已接招",
+  declined: "这次做不了",
+  failed: "没找到参考"
+};
 
 const defaultImages = [
   "https://images.unsplash.com/photo-1512058564366-18510be2db19?auto=format&fit=crop&w=900&q=80",
@@ -267,6 +274,7 @@ function emptyPlan() {
       lunch: false,
       dinner: false
     },
+    wishes: [],
     submitted: false,
     submittedAt: null,
     notificationUnread: false
@@ -288,10 +296,31 @@ function normalizePlan(plan = {}) {
     normalized.skipped[meal] = Boolean(normalized.skipped[meal]);
   }
 
+  normalized.wishes = Array.isArray(normalized.wishes)
+    ? normalized.wishes.map(normalizeWish).filter(Boolean)
+    : [];
   normalized.submitted = Boolean(normalized.submitted);
   normalized.submittedAt = normalized.submittedAt || null;
   normalized.notificationUnread = Boolean(normalized.notificationUnread);
   return normalized;
+}
+
+function normalizeWish(wish = {}) {
+  const name = String(wish.name || "").trim();
+  if (!name) return null;
+  const meal = mealOrder.includes(wish.meal) ? wish.meal : "dinner";
+  const status = wishStatuses[wish.status] ? wish.status : "searching";
+  return {
+    id: wish.id || `wish-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    meal,
+    name,
+    note: String(wish.note || "").trim(),
+    status,
+    createdAt: wish.createdAt || new Date().toISOString(),
+    recipe: wish.recipe && typeof wish.recipe === "object" ? wish.recipe : null,
+    dishId: wish.dishId || "",
+    error: String(wish.error || "").trim()
+  };
 }
 
 function createDefaultState() {
@@ -535,6 +564,26 @@ function allSelectedIds(plan = ensureTodayPlan()) {
   return mealOrder.flatMap((meal) => plan[meal]);
 }
 
+function wishesForMeal(plan = ensureTodayPlan(), meal = ui.meal) {
+  return (plan.wishes || []).filter((wish) => wish.meal === meal);
+}
+
+function wishCount(plan = ensureTodayPlan()) {
+  return (plan.wishes || []).length;
+}
+
+function wishStatusText(wish) {
+  return wishStatuses[wish?.status] || "待处理";
+}
+
+function wishStatusClass(wish) {
+  return wishStatuses[wish?.status] ? wish.status : "unknown";
+}
+
+function mealItemCount(plan, meal) {
+  return (plan[meal]?.length || 0) + wishesForMeal(plan, meal).length;
+}
+
 function dishMatchesUi(dish) {
   const search = ui.search.trim().toLowerCase();
   const mealOk = dish.meals.includes(ui.meal);
@@ -607,7 +656,7 @@ function groupedShoppingList(shopping = aggregateShoppingList()) {
 }
 
 function mealResolved(plan, meal) {
-  return plan.skipped[meal] || plan[meal].length > 0;
+  return plan.skipped[meal] || plan[meal].length > 0 || wishesForMeal(plan, meal).length > 0;
 }
 
 function unresolvedMeals(plan) {
@@ -624,7 +673,7 @@ function orderStatusText(plan) {
 }
 
 function hasPlanActivity(plan) {
-  return selectedDishCount(plan) > 0 || mealOrder.some((meal) => plan.skipped[meal]);
+  return selectedDishCount(plan) > 0 || wishCount(plan) > 0 || mealOrder.some((meal) => plan.skipped[meal]);
 }
 
 function canViewOrder(plan) {
@@ -804,6 +853,7 @@ function renderWifeView(plan) {
   const skipped = plan.skipped[ui.meal];
   const filtered = filteredDishes();
   const readOnly = isPastDate();
+  const activeMealCount = mealItemCount(plan, ui.meal);
   return `
     <main class="workspace">
       <section class="main-column">
@@ -814,7 +864,7 @@ function renderWifeView(plan) {
           <div class="decision-row">
             <div>
               <strong>${mealLabels[ui.meal]}</strong>
-              <span>${readOnly ? "历史查看模式" : skipped ? "这餐不需要做饭" : plan[ui.meal].length ? `已选 ${plan[ui.meal].length} 道` : "还没决定吃什么"}</span>
+              <span>${readOnly ? "历史查看模式" : skipped ? "这餐不需要做饭" : activeMealCount ? `已安排 ${activeMealCount} 项` : "还没决定吃什么"}</span>
             </div>
             ${
               readOnly
@@ -845,6 +895,7 @@ function renderWifeView(plan) {
                     )
                     .join("")}
                 </div>
+                ${renderWishForm()}
               `
           }
         </div>
@@ -872,12 +923,28 @@ function renderWifeView(plan) {
 function renderMealTab(plan, meal) {
   const isActive = ui.meal === meal;
   const isSkipped = plan.skipped[meal];
-  const count = plan[meal].length;
+  const count = mealItemCount(plan, meal);
   const stateText = isSkipped ? "跳过" : count ? `${count}` : "";
   return `
     <button class="tab ${isActive ? "active" : ""} ${mealResolved(plan, meal) ? "resolved" : ""}" data-action="set-meal" data-meal="${meal}">
       ${mealLabels[meal]} ${stateText ? `<span>${stateText}</span>` : ""}
     </button>
+  `;
+}
+
+function renderWishForm() {
+  return `
+    <form class="wish-form" data-role="wish-form">
+      <div class="wish-copy">
+        <strong>菜单里没有？点一道许愿菜</strong>
+        <span>输入菜名，系统会给老公找下厨房参考。</span>
+      </div>
+      <div class="wish-input-row">
+        <input name="wishName" required maxlength="24" autocomplete="off" placeholder="比如：糖醋里脊" />
+        <button class="button primary" type="submit">许愿</button>
+      </div>
+      <textarea name="wishNote" maxlength="80" placeholder="口味备注，可不填，比如少油、酸甜口"></textarea>
+    </form>
   `;
 }
 
@@ -923,13 +990,15 @@ function renderNoDish() {
 }
 
 function renderHistoryMeal(plan, meal) {
+  const wishes = wishesForMeal(plan, meal);
   if (plan.skipped[meal]) {
     return `<div class="empty-state history-state">${mealLabels[meal]}当时跳过了。</div>`;
   }
-  if (!plan[meal].length) {
+  if (!plan[meal].length && !wishes.length) {
     return `<div class="empty-state history-state">这天没有记录${mealLabels[meal]}吃什么。</div>`;
   }
-  return plan[meal]
+  return [
+    ...plan[meal]
     .map((id) => {
       const dish = getDish(id);
       if (!dish) return "";
@@ -946,8 +1015,27 @@ function renderHistoryMeal(plan, meal) {
           </div>
         </article>
       `;
-    })
-    .join("");
+    }),
+    ...wishes.map((wish) => renderHistoryWishCard(wish))
+  ].join("");
+}
+
+function renderHistoryWishCard(wish) {
+  const recipe = wish.recipe || {};
+  const image = recipe.image || fallbackDishImage({ name: wish.name, category: "许愿菜" });
+  return `
+    <article class="history-dish-card wish-history-card">
+      <img src="${escapeAttr(image)}" alt="${escapeAttr(wish.name)}" loading="lazy" />
+      <div>
+        <div class="dish-title-row">
+          <h2>${escapeHtml(wish.name)}</h2>
+          <span class="pill">${escapeHtml(wishStatusText(wish))}</span>
+        </div>
+        <p class="ingredients-line">${escapeHtml(recipe.name ? `参考菜谱：${recipe.name}` : wish.note || "当时点了一道菜单外的菜。")}</p>
+        ${recipe.sourceUrl ? `<a class="button" href="${escapeAttr(recipe.sourceUrl)}" target="_blank" rel="noreferrer">查看参考</a>` : ""}
+      </div>
+    </article>
+  `;
 }
 
 function renderWifeOrderPanel(plan) {
@@ -963,8 +1051,8 @@ function renderWifeOrderPanel(plan) {
       </div>
       <div class="panel-body">
         <div class="day-summary">
-          <div class="stat"><strong>${selectedDishCount(plan)}</strong><span>已选菜</span></div>
-          <div class="stat"><strong>${mealOrder.filter((meal) => plan.skipped[meal]).length}</strong><span>跳过餐次</span></div>
+          <div class="stat"><strong>${selectedDishCount(plan)}</strong><span>菜单菜</span></div>
+          <div class="stat"><strong>${wishCount(plan)}</strong><span>许愿菜</span></div>
           <div class="stat"><strong>${pending.length}</strong><span>待决定</span></div>
         </div>
         ${mealOrder.map((meal) => renderWifeMealBlock(plan, meal)).join("")}
@@ -985,19 +1073,21 @@ function renderWifeOrderPanel(plan) {
 
 function renderWifeMealBlock(plan, meal) {
   const ids = plan[meal];
+  const wishes = wishesForMeal(plan, meal);
   const skipped = plan.skipped[meal];
   const readOnly = isPastDate();
+  const total = ids.length + wishes.length;
   return `
     <div class="meal-block">
       <button class="meal-heading meal-heading-button" data-action="focus-meal" data-meal="${meal}">
         <span>${mealLabels[meal]}</span>
-        <span>${skipped ? "已跳过" : ids.length ? `${ids.length} 道` : "待定"}</span>
+        <span>${skipped ? "已跳过" : total ? `${total} 项` : "待定"}</span>
       </button>
       ${
         skipped
           ? `<button class="empty-state compact meal-empty-button" data-action="focus-meal" data-meal="${meal}">${readOnly ? "这餐当时跳过了" : "这餐不做饭，点击恢复点餐"}</button>`
-          : ids.length
-            ? `<ul class="order-list">${ids.map((id) => renderWifeOrderItem(meal, id)).join("")}</ul>`
+          : total
+            ? `<ul class="order-list">${ids.map((id) => renderWifeOrderItem(meal, id)).join("")}${wishes.map((wish) => renderWifeWishItem(wish)).join("")}</ul>`
             : `<button class="empty-state compact meal-empty-button" data-action="focus-meal" data-meal="${meal}">${readOnly ? `这天没有记录${mealLabels[meal]}` : `还没有安排${mealLabels[meal]}，点击去选菜`}</button>`
       }
     </div>
@@ -1018,6 +1108,28 @@ function renderWifeOrderItem(meal, id) {
         <div class="item-actions">
           <button class="icon-button" title="查看详情" aria-label="查看 ${escapeAttr(dish.name)}" data-action="view-detail" data-dish="${dish.id}">?</button>
           ${readOnly ? "" : `<button class="icon-button" title="移除" aria-label="移除 ${escapeAttr(dish.name)}" data-action="remove-dish" data-meal="${meal}" data-dish="${id}">×</button>`}
+        </div>
+      </div>
+    </li>
+  `;
+}
+
+function renderWifeWishItem(wish) {
+  const readOnly = isPastDate();
+  return `
+    <li class="order-item wish-order-item">
+      <div class="order-main">
+        <div>
+          <strong>${escapeHtml(wish.name)}</strong>
+          <small>许愿菜 · ${escapeHtml(wishStatusText(wish))}${wish.note ? ` · ${escapeHtml(wish.note)}` : ""}</small>
+        </div>
+        <div class="item-actions">
+          ${
+            wish.recipe?.sourceUrl
+              ? `<a class="icon-button" title="查看参考" aria-label="查看 ${escapeAttr(wish.name)} 的参考菜谱" href="${escapeAttr(wish.recipe.sourceUrl)}" target="_blank" rel="noreferrer">?</a>`
+              : ""
+          }
+          ${readOnly ? "" : `<button class="icon-button" title="移除" aria-label="移除 ${escapeAttr(wish.name)}" data-action="remove-wish" data-wish="${wish.id}">×</button>`}
         </div>
       </div>
     </li>
@@ -1053,7 +1165,7 @@ function renderNotificationPanel(plan) {
       </div>
       <div class="panel-body">
         <div class="day-summary">
-          <div class="stat"><strong>${selectedDishCount(plan)}</strong><span>需要做</span></div>
+          <div class="stat"><strong>${selectedDishCount(plan) + wishCount(plan)}</strong><span>点单项</span></div>
           <div class="stat"><strong>${mealOrder.filter((meal) => plan.skipped[meal]).length}</strong><span>跳过</span></div>
           <div class="stat"><strong>${plan.submitted ? aggregateShoppingList(plan).length : 0}</strong><span>采购项</span></div>
         </div>
@@ -1085,17 +1197,19 @@ function renderHusbandOrderPanel(plan) {
 
 function renderHusbandMealBlock(plan, meal) {
   const ids = plan[meal];
+  const wishes = wishesForMeal(plan, meal);
+  const total = ids.length + wishes.length;
   return `
     <div class="meal-block cook-meal-block">
       <div class="meal-heading">
         <span>${mealLabels[meal]}</span>
-        <span>${plan.skipped[meal] ? "老婆跳过" : ids.length ? `${ids.length} 道菜` : "未安排"}</span>
+        <span>${plan.skipped[meal] ? "老婆跳过" : total ? `${total} 项` : "未安排"}</span>
       </div>
       ${
         plan.skipped[meal]
           ? `<div class="skip-card">这餐不用准备，采购清单已自动排除。</div>`
-          : ids.length
-            ? `<div class="cook-card-list">${ids.map((id) => renderCookDishCard(meal, id)).join("")}</div>`
+          : total
+            ? `<div class="cook-card-list">${ids.map((id) => renderCookDishCard(meal, id)).join("")}${wishes.map((wish) => renderWishCookCard(wish)).join("")}</div>`
             : `<div class="empty-state compact">这餐没有菜。</div>`
       }
     </div>
@@ -1130,6 +1244,64 @@ function renderCookDishCard(meal, id) {
         <div class="dish-actions">
           <a class="button" href="${escapeAttr(dishSourceUrl(dish))}" target="_blank" rel="noreferrer">下厨房</a>
           <button class="button green" data-action="view-detail" data-dish="${dish.id}">查看详情</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderWishCookCard(wish) {
+  const recipe = wish.recipe || {};
+  const previewDish = {
+    name: recipe.name || wish.name,
+    category: "许愿菜",
+    image: recipe.image || ""
+  };
+  const sourceUrl = recipe.sourceUrl || "";
+  const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+  const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
+  const isBusy = wish.status === "searching";
+  const hasRecipe = Boolean(recipe.name || sourceUrl);
+  return `
+    <article class="cook-card wish-cook-card">
+      <img src="${escapeAttr(dishImageSrc(previewDish))}" alt="${escapeAttr(wish.name)}" loading="lazy" />
+      <div class="cook-card-body">
+        <div class="dish-title-row">
+          <h3>${escapeHtml(wish.name)}</h3>
+          <span class="pill wish-status ${wishStatusClass(wish)}">${escapeHtml(wishStatusText(wish))}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta">${mealLabels[wish.meal]}</span>
+          <span class="meta">老婆许愿</span>
+          ${recipe.searchRating ? `<span class="meta">评分 ${recipe.searchRating}</span>` : ""}
+          ${recipe.searchCookedCount ? `<span class="meta">${recipe.searchCookedCount} 人做过</span>` : ""}
+        </div>
+        <p class="cook-note">${escapeHtml(wish.note || "菜单外想吃的菜，先给老公一份参考做法。")}</p>
+        ${
+          isBusy
+            ? `<div class="empty-state compact">正在自动找下厨房参考菜谱。</div>`
+            : hasRecipe
+              ? `
+                <div class="mini-section">
+                  <strong>参考菜谱</strong>
+                  <p>${escapeHtml(recipe.name || wish.name)}</p>
+                </div>
+                <div class="mini-section">
+                  <strong>原料参考</strong>
+                  <p>${ingredients.length ? ingredients.slice(0, 12).map(escapeHtml).join("、") : "菜谱暂未读到原料，建议打开下厨房确认。"}</p>
+                </div>
+                <div class="mini-section">
+                  <strong>做法参考</strong>
+                  <ol>${steps.length ? steps.slice(0, 5).map((step) => `<li>${escapeHtml(step)}</li>`).join("") : "<li>打开下厨房查看完整步骤。</li>"}</ol>
+                </div>
+              `
+              : `<div class="empty-state compact">${escapeHtml(wish.error || "暂时没找到参考菜谱。")}</div>`
+        }
+        <div class="dish-actions wish-actions">
+          ${sourceUrl ? `<a class="button" href="${escapeAttr(sourceUrl)}" target="_blank" rel="noreferrer">下厨房</a>` : ""}
+          <button class="button green" data-action="accept-wish" data-wish="${wish.id}" ${hasRecipe ? "" : "disabled"}>我来挑战</button>
+          <button class="button" data-action="refresh-wish" data-wish="${wish.id}" ${isBusy ? "disabled" : ""}>重新找</button>
+          <button class="button ghost" data-action="decline-wish" data-wish="${wish.id}">这次做不了</button>
         </div>
       </div>
     </article>
@@ -1467,6 +1639,175 @@ function removeDishFromMeal(dishId, meal) {
   render();
 }
 
+async function submitWish(event) {
+  event.preventDefault();
+  if (!isEditableDate()) {
+    toast("历史日期只能查看，不能点菜");
+    return;
+  }
+
+  const plan = ensureTodayPlan();
+  if (plan.skipped[ui.meal]) {
+    toast(`已跳过${mealLabels[ui.meal]}，先恢复点餐`);
+    return;
+  }
+
+  const form = event.target;
+  const data = new FormData(form);
+  const name = String(data.get("wishName") || "").trim();
+  const note = String(data.get("wishNote") || "").trim();
+  if (!name) {
+    toast("先输入想吃的菜名");
+    return;
+  }
+
+  const existed = wishesForMeal(plan, ui.meal).some((wish) => wish.name === name);
+  if (existed) {
+    toast("这道许愿菜已经点过了");
+    return;
+  }
+
+  const wish = normalizeWish({
+    id: `wish-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    meal: ui.meal,
+    name,
+    note,
+    status: "searching",
+    createdAt: new Date().toISOString()
+  });
+  plan.wishes = [wish, ...(plan.wishes || [])];
+  plan.skipped[ui.meal] = false;
+  markPlanDraft(plan);
+  saveState();
+  form.reset();
+  render();
+  toast(`已许愿：${name}`);
+  searchWishRecipe(selectedDateKey(), wish.id);
+}
+
+async function searchWishRecipe(dateKey, wishId) {
+  const current = findWishLocation(wishId, dateKey);
+  if (!current) return;
+  current.wish.status = "searching";
+  current.wish.error = "";
+  saveState();
+
+  try {
+    const response = await fetch("/api/search-recipe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: current.wish.name })
+    });
+    const payload = await response.json().catch(() => ({}));
+    const latest = findWishLocation(wishId, dateKey);
+    if (!latest) return;
+    if (!response.ok) throw new Error(payload.error || "没找到参考菜谱");
+
+    latest.wish.status = "found";
+    latest.wish.recipe = payload.recipe || null;
+    latest.wish.error = "";
+    saveState();
+    render();
+  } catch (error) {
+    const latest = findWishLocation(wishId, dateKey);
+    if (!latest) return;
+    latest.wish.status = "failed";
+    latest.wish.error = error.message || "没找到参考菜谱";
+    saveState();
+    render();
+  }
+}
+
+function removeWish(wishId) {
+  if (!isEditableDate()) {
+    toast("历史日期只能查看，不能修改");
+    return;
+  }
+  const found = findWishLocation(wishId);
+  if (!found) return;
+  found.plan.wishes = found.plan.wishes.filter((wish) => wish.id !== wishId);
+  markPlanDraft(found.plan);
+  saveState();
+  render();
+}
+
+function refreshWish(wishId) {
+  const found = findWishLocation(wishId);
+  if (!found) return;
+  found.wish.status = "searching";
+  found.wish.recipe = null;
+  found.wish.error = "";
+  saveState();
+  render();
+  searchWishRecipe(found.dateKey, wishId);
+}
+
+function declineWish(wishId) {
+  const found = findWishLocation(wishId);
+  if (!found) return;
+  found.wish.status = "declined";
+  found.wish.error = "";
+  saveState();
+  render();
+  toast(`已标记这次不做：${found.wish.name}`);
+}
+
+function acceptWish(wishId) {
+  const found = findWishLocation(wishId);
+  if (!found || !found.wish.recipe) {
+    toast("还没有可用的参考菜谱");
+    return;
+  }
+
+  const dish = createDishFromWish(found.wish);
+  const existing = activeDishes().find(
+    (item) => item.name === dish.name || (item.sourceUrl && item.sourceUrl === dish.sourceUrl)
+  );
+  const dishId = existing?.id || dish.id;
+  if (!existing) state.dishes = [dish, ...state.dishes];
+  if (!found.plan[found.wish.meal].includes(dishId)) {
+    found.plan[found.wish.meal].push(dishId);
+  }
+  found.plan.skipped[found.wish.meal] = false;
+  found.plan.wishes = found.plan.wishes.filter((wish) => wish.id !== wishId);
+  saveState();
+  render();
+  toast(`已接招：${dish.name}`);
+}
+
+function createDishFromWish(wish) {
+  const recipe = wish.recipe || {};
+  const ingredientLines = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+  const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
+  const name = recipe.name || wish.name;
+  return {
+    id: `dish-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name,
+    category: guessDishCategory(name, ingredientLines),
+    meals: [wish.meal],
+    time: Math.max(5, Number(recipe.time) || 30),
+    difficulty: "挑战菜",
+    rating: 4,
+    image: recipe.image || "",
+    ingredients: parseIngredients(ingredientLines.join("\n")),
+    steps,
+    sourceUrl: recipe.sourceUrl || "",
+    note: wish.note ? `老婆许愿：${wish.note}` : "老婆许愿菜，按参考菜谱尝试。"
+  };
+}
+
+function findWishLocation(wishId, preferredDateKey = selectedDateKey()) {
+  const keys = [preferredDateKey, ...Object.keys(state.plans).filter((key) => key !== preferredDateKey)];
+  for (const key of keys) {
+    if (!state.plans[key]) continue;
+    const plan = normalizePlan(state.plans[key]);
+    state.plans[key] = plan;
+    const wish = plan.wishes.find((item) => item.id === wishId);
+    if (wish) return { dateKey: key, plan, wish };
+  }
+  return null;
+}
+
 function removeDishFromMenu(dishId) {
   const dish = getDish(dishId);
   if (!dish) return;
@@ -1535,7 +1876,10 @@ function toggleMealSkip(meal) {
   }
   const plan = ensureTodayPlan();
   plan.skipped[meal] = !plan.skipped[meal];
-  if (plan.skipped[meal]) plan[meal] = [];
+  if (plan.skipped[meal]) {
+    plan[meal] = [];
+    plan.wishes = plan.wishes.filter((wish) => wish.meal !== meal);
+  }
   markPlanDraft(plan);
   saveState();
   render();
@@ -1917,6 +2261,10 @@ app.addEventListener("click", (event) => {
 
   if (action === "add-dish") addDishToMeal(actionTarget.dataset.dish);
   if (action === "remove-dish") removeDishFromMeal(actionTarget.dataset.dish, actionTarget.dataset.meal);
+  if (action === "remove-wish") removeWish(actionTarget.dataset.wish);
+  if (action === "refresh-wish") refreshWish(actionTarget.dataset.wish);
+  if (action === "decline-wish") declineWish(actionTarget.dataset.wish);
+  if (action === "accept-wish") acceptWish(actionTarget.dataset.wish);
   if (action === "remove-menu-dish") removeDishFromMenu(actionTarget.dataset.dish);
   if (action === "random") randomDish();
   if (action === "clear-today") clearToday();
@@ -1970,6 +2318,9 @@ app.addEventListener("input", (event) => {
 });
 
 app.addEventListener("submit", (event) => {
+  if (event.target.matches("[data-role='wish-form']")) {
+    submitWish(event).catch((error) => toast(error.message || "许愿失败"));
+  }
   if (event.target.matches("[data-role='dish-form']")) {
     handleFormSubmit(event).catch((error) => toast(error.message || "保存失败"));
   }

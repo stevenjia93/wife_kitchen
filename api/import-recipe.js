@@ -18,30 +18,34 @@ async function handler(req, res) {
 
   try {
     const body = await readJsonBody(req);
-    const sourceUrl = normalizeSourceUrl(body.url);
-    const response = await fetch(sourceUrl, {
-      headers: {
-        "user-agent": USER_AGENT,
-        accept: "text/html,application/xhtml+xml",
-        "accept-language": "zh-CN,zh;q=0.9,en;q=0.5"
-      }
-    });
-
-    if (!response.ok) {
-      res.status(502).json({ error: "菜谱页面暂时无法读取" });
-      return;
-    }
-
-    const html = (await response.text()).slice(0, MAX_HTML_CHARS);
-    const recipe = parseRecipePage(html, sourceUrl);
-    if (recipe.image) {
-      recipe.imageUrl = recipe.image;
-      recipe.image = await fetchImageDataUrl(recipe.image, sourceUrl);
-    }
+    const recipe = await importRecipeFromUrl(body.url);
     res.status(200).json({ recipe });
   } catch (error) {
     res.status(error.statusCode || 400).json({ error: error.message || "导入失败" });
   }
+}
+
+async function importRecipeFromUrl(rawUrl) {
+  const sourceUrl = normalizeSourceUrl(rawUrl);
+  const response = await fetch(sourceUrl, {
+    headers: {
+      "user-agent": USER_AGENT,
+      accept: "text/html,application/xhtml+xml",
+      "accept-language": "zh-CN,zh;q=0.9,en;q=0.5"
+    }
+  });
+
+  if (!response.ok) {
+    throw httpError("菜谱页面暂时无法读取", 502);
+  }
+
+  const html = (await response.text()).slice(0, MAX_HTML_CHARS);
+  const recipe = parseRecipePage(html, sourceUrl);
+  if (recipe.image) {
+    recipe.imageUrl = recipe.image;
+    recipe.image = await fetchImageDataUrl(recipe.image, sourceUrl);
+  }
+  return recipe;
 }
 
 function readJsonBody(req) {
@@ -290,6 +294,7 @@ function httpError(message, statusCode) {
 
 module.exports = handler;
 module.exports._internals = {
+  importRecipeFromUrl,
   parseRecipePage,
   normalizeSourceUrl,
   fetchImageDataUrl
