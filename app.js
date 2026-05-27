@@ -1369,7 +1369,11 @@ function renderRecipeForm() {
       </div>
       <div class="form-field">
         <label for="dish-source">下厨房链接</label>
-        <input id="dish-source" name="sourceUrl" type="url" placeholder="https://www.xiachufang.com/recipe/..." />
+        <div class="source-import-row">
+          <input id="dish-source" name="sourceUrl" type="url" placeholder="https://www.xiachufang.com/recipe/..." />
+          <button class="button" type="button" data-action="import-recipe-link">链接导入</button>
+        </div>
+        <input name="imageUrl" type="hidden" data-role="imported-image" />
       </div>
       <div class="form-field">
         <label for="dish-image">封面图</label>
@@ -1650,6 +1654,7 @@ async function handleFormSubmit(event) {
     .map((step) => step.trim())
     .filter(Boolean);
   const sourceUrl = String(data.get("sourceUrl") || "").trim();
+  const importedImageUrl = String(data.get("imageUrl") || "").trim();
 
   if (!name || !selectedMeals.length || !ingredients.length) {
     toast("菜名、餐次和食材都要填");
@@ -1667,7 +1672,7 @@ async function handleFormSubmit(event) {
     time: Math.max(5, Number(data.get("time")) || 20),
     difficulty: "自家菜",
     rating: 4,
-    image: imageDataUrl,
+    image: imageDataUrl || importedImageUrl,
     ingredients,
     steps,
     sourceUrl,
@@ -1684,6 +1689,68 @@ async function handleFormSubmit(event) {
   form.reset();
   render();
   toast(`已加入：${name}`);
+}
+
+async function importRecipeFromLink(button) {
+  const form = button.closest("form");
+  if (!form) return;
+  const sourceInput = form.elements.sourceUrl;
+  const sourceUrl = String(sourceInput?.value || "").trim();
+  if (!sourceUrl) {
+    toast("先粘贴下厨房链接");
+    sourceInput?.focus();
+    return;
+  }
+
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "导入中";
+
+  try {
+    const response = await fetch("/api/import-recipe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: sourceUrl })
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "导入失败");
+
+    applyImportedRecipe(form, payload.recipe || {});
+    toast("已填好，确认后保存");
+  } catch (error) {
+    toast(error.message || "导入失败");
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+function applyImportedRecipe(form, recipe) {
+  const ingredientLines = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+  const stepLines = Array.isArray(recipe.steps) ? recipe.steps : [];
+
+  if (recipe.name) form.elements.name.value = recipe.name;
+  if (recipe.sourceUrl) form.elements.sourceUrl.value = recipe.sourceUrl;
+  if (recipe.time) form.elements.time.value = Math.max(5, Number(recipe.time) || 20);
+  if (ingredientLines.length) form.elements.ingredients.value = ingredientLines.join("\n");
+  if (stepLines.length) form.elements.steps.value = stepLines.join("\n");
+  if (recipe.note) form.elements.note.value = recipe.note;
+  if (recipe.image) form.querySelector("[data-role='imported-image']").value = recipe.image;
+
+  const category = guessDishCategory(recipe.name, ingredientLines);
+  if ([...form.elements.category.options].some((option) => option.value === category)) {
+    form.elements.category.value = category;
+  }
+}
+
+function guessDishCategory(name = "", ingredientLines = []) {
+  const text = [name, ...ingredientLines].join(" ");
+  if (/粥|汤|羹|煲/.test(text)) return "汤粥";
+  if (/面|饭|粉|饼|馄饨|饺|包子|馒头/.test(text)) return "主食";
+  if (/鸡|鸭|牛|羊|猪|排骨|肉|虾|鱼|翅/.test(text)) return "肉菜";
+  if (/蛋|奶|吐司|早餐/.test(text)) return "早餐";
+  if (/菜|瓜|豆|茄|菇|笋|藕|花|萝卜|土豆|番茄/.test(text)) return "蔬菜";
+  return "快手菜";
 }
 
 async function handleCoverUpload(event) {
@@ -1839,6 +1906,7 @@ app.addEventListener("click", (event) => {
   if (action === "feedback") setFeedback(actionTarget.dataset.dish, actionTarget.dataset.value);
   if (action === "toggle-bought") toggleBought(actionTarget.dataset.key);
   if (action === "copy-list") copyShoppingList();
+  if (action === "import-recipe-link") importRecipeFromLink(actionTarget);
   if (action === "toggle-skip") toggleMealSkip(actionTarget.dataset.meal);
   if (action === "submit-order") submitOrder();
   if (action === "mark-notification-read") markNotificationRead();

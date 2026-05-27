@@ -1188,6 +1188,18 @@ img {
   resize: vertical;
 }
 
+.source-import-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.source-import-row .button {
+  min-height: 43px;
+  white-space: nowrap;
+}
+
 .file-button {
   cursor: pointer;
 }
@@ -1375,7 +1387,8 @@ img {
   }
 
   .decision-row,
-  .dish-actions {
+  .dish-actions,
+  .source-import-row {
     grid-template-columns: 1fr;
   }
 
