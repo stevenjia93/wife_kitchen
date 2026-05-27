@@ -1200,6 +1200,45 @@ img {
   white-space: nowrap;
 }
 
+.import-cover-preview {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 8px;
+}
+
+.import-cover-preview[hidden] {
+  display: none;
+}
+
+.import-cover-preview img {
+  width: 64px;
+  height: 52px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: var(--surface-soft);
+}
+
+.import-cover-preview strong,
+.import-cover-preview span {
+  display: block;
+}
+
+.import-cover-preview strong {
+  font-size: 13px;
+}
+
+.import-cover-preview span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .file-button {
   cursor: pointer;
 }

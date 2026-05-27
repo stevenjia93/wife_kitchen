@@ -1,4 +1,5 @@
 const MAX_HTML_CHARS = 1_500_000;
+const MAX_IMAGE_BYTES = 700_000;
 const USER_AGENT =
   "Mozilla/5.0 (compatible; WifeKitchenRecipeImporter/1.0; +https://wifekitchen.vercel.app)";
 
@@ -33,6 +34,10 @@ async function handler(req, res) {
 
     const html = (await response.text()).slice(0, MAX_HTML_CHARS);
     const recipe = parseRecipePage(html, sourceUrl);
+    if (recipe.image) {
+      recipe.imageUrl = recipe.image;
+      recipe.image = await fetchImageDataUrl(recipe.image, sourceUrl);
+    }
     res.status(200).json({ recipe });
   } catch (error) {
     res.status(error.statusCode || 400).json({ error: error.message || "导入失败" });
@@ -111,6 +116,29 @@ function parseRecipePage(html, sourceUrl) {
     steps,
     note: cleanText(description).slice(0, 120)
   };
+}
+
+async function fetchImageDataUrl(imageUrl, refererUrl) {
+  try {
+    const response = await fetch(imageUrl, {
+      headers: {
+        "user-agent": USER_AGENT,
+        accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        referer: refererUrl
+      }
+    });
+    if (!response.ok) return "";
+
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    if (!contentType.startsWith("image/")) return "";
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > MAX_IMAGE_BYTES) return "";
+
+    return `data:${contentType.split(";")[0]};base64,${buffer.toString("base64")}`;
+  } catch {
+    return "";
+  }
 }
 
 function extractMetadata(html) {
@@ -263,5 +291,6 @@ function httpError(message, statusCode) {
 module.exports = handler;
 module.exports._internals = {
   parseRecipePage,
-  normalizeSourceUrl
+  normalizeSourceUrl,
+  fetchImageDataUrl
 };

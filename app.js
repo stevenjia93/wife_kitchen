@@ -1374,6 +1374,7 @@ function renderRecipeForm() {
           <button class="button" type="button" data-action="import-recipe-link">链接导入</button>
         </div>
         <input name="imageUrl" type="hidden" data-role="imported-image" />
+        <div class="import-cover-preview" data-role="import-cover-preview" hidden></div>
       </div>
       <div class="form-field">
         <label for="dish-image">封面图</label>
@@ -1735,12 +1736,28 @@ function applyImportedRecipe(form, recipe) {
   if (ingredientLines.length) form.elements.ingredients.value = ingredientLines.join("\n");
   if (stepLines.length) form.elements.steps.value = stepLines.join("\n");
   if (recipe.note) form.elements.note.value = recipe.note;
-  if (recipe.image) form.querySelector("[data-role='imported-image']").value = recipe.image;
+  if (recipe.image) {
+    form.querySelector("[data-role='imported-image']").value = recipe.image;
+    renderImportCoverPreview(form, recipe.image);
+  }
 
   const category = guessDishCategory(recipe.name, ingredientLines);
   if ([...form.elements.category.options].some((option) => option.value === category)) {
     form.elements.category.value = category;
   }
+}
+
+function renderImportCoverPreview(form, imageSrc) {
+  const preview = form.querySelector("[data-role='import-cover-preview']");
+  if (!preview || !imageSrc) return;
+  preview.hidden = false;
+  preview.innerHTML = `
+    <img src="${escapeAttr(imageSrc)}" alt="自动导入的菜谱封面" />
+    <div>
+      <strong>已自动抓取封面</strong>
+      <span>保存后会作为这道菜的图片。</span>
+    </div>
+  `;
 }
 
 function guessDishCategory(name = "", ingredientLines = []) {
