@@ -79,10 +79,18 @@ function normalizeSourceUrl(rawUrl) {
     throw httpError("目前只支持下厨房链接", 400);
   }
 
+  if (hostname === "www.xiachufang.com") {
+    url.hostname = "m.xiachufang.com";
+  }
+
   return url.toString();
 }
 
 function parseRecipePage(html, sourceUrl) {
+  if (/滑动验证|安全验证|geetest|captcha/i.test(html.slice(0, 20_000))) {
+    throw httpError("下厨房触发访问验证，请换成 m.xiachufang.com 的移动端链接或稍后重试", 502);
+  }
+
   const metadata = extractMetadata(html);
   const recipeJson = findRecipeJson(html);
   const title = cleanRecipeTitle(
@@ -160,7 +168,7 @@ function normalizeInstructions(value) {
   const list = flattenInstructions(value);
   return list
     .flatMap((item) => splitInstructionText(firstText(item)))
-    .map((item) => cleanText(item))
+    .map(cleanStepText)
     .filter(Boolean)
     .slice(0, 20);
 }
@@ -215,6 +223,10 @@ function cleanText(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
     .replace(/^\s+|\s+$/g, "");
+}
+
+function cleanStepText(value) {
+  return cleanText(value).replace(/[，,]\s*$/g, "");
 }
 
 function absoluteUrl(value, baseUrl) {
