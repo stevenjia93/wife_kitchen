@@ -695,7 +695,7 @@ function markPlanDraft(plan) {
 function render() {
   const plan = ensureTodayPlan();
   const isWife = ui.view === "wife";
-  document.title = isWife ? "老婆点菜" : "老公工作台";
+  document.title = isWife ? "老婆点菜" : "老公厨房";
   app.innerHTML = `
     <div class="app-shell">
       ${renderHeader(plan)}
@@ -715,7 +715,7 @@ function renderHeader(plan) {
       <div class="brand">
         <div class="brand-mark">${isWife ? "点" : "厨"}</div>
         <div>
-          <h1>${isWife ? "老婆点菜" : "老公工作台"}</h1>
+          <h1>${isWife ? "老婆点菜" : "老公厨房"}</h1>
           <p class="subtle">${dayLabel()} · ${dateModeText()}，${isWife ? wifeDateHint() : orderStatusText(plan)}</p>
         </div>
       </div>
@@ -723,7 +723,7 @@ function renderHeader(plan) {
         <div class="role-switch" aria-label="切换界面">
           <button class="role-tab ${ui.view === "wife" ? "active" : ""}" data-action="set-view" data-view="wife">老婆点菜</button>
           <button class="role-tab ${ui.view === "husband" ? "active" : ""}" data-action="set-view" data-view="husband">
-            老公接单${plan.notificationUnread ? `<span class="badge-dot"></span>` : ""}
+            老公厨房${plan.notificationUnread ? `<span class="badge-dot"></span>` : ""}
           </button>
         </div>
       </div>
@@ -788,7 +788,7 @@ function renderHouseholdGate() {
           <form class="form-grid" data-role="household-form">
             <div class="form-field">
               <label for="household-code">家庭码</label>
-              <input id="household-code" name="householdCode" required autocomplete="off" placeholder="比如：zejia-kitchen-2026" />
+              <input id="household-code" name="householdCode" required autocomplete="off" placeholder="比如：home-kitchen-2026" />
             </div>
             <button class="button primary" type="submit" ${online.loading ? "disabled" : ""}>
               ${online.loading ? "连接中..." : "进入家庭菜单"}
@@ -917,7 +917,7 @@ function renderWifeDishCard(dish, plan) {
 function renderNoDish() {
   return `
     <div class="empty-state">
-      这个筛选下还没有菜。换个餐次或让老公在工作台录入菜谱。
+      这个筛选下还没有菜。换个餐次或去老公厨房录入菜谱。
     </div>
   `;
 }
@@ -1046,7 +1046,7 @@ function renderNotificationPanel(plan) {
     <section class="panel notice-panel ${plan.notificationUnread ? "unread" : ""}">
       <div class="panel-header">
         <div>
-          <h2>${plan.notificationUnread ? "新订单" : "接单状态"}</h2>
+          <h2>${plan.notificationUnread ? "新订单" : "厨房状态"}</h2>
           <p>${isPastDate() ? `${dayLabel()}的历史记录。` : plan.submitted ? `老婆 ${formatTime(plan.submittedAt)} 确认了这天的安排。` : "等待老婆确认下单。"}</p>
         </div>
         ${plan.notificationUnread ? `<button class="button" data-action="mark-notification-read">已读</button>` : ""}
@@ -1068,7 +1068,7 @@ function renderHusbandOrderPanel(plan) {
     <section class="panel order-detail-panel">
       <div class="panel-header">
         <div>
-          <h2>${isPastDate() ? "历史接单" : "这天接单"}</h2>
+          <h2>${isPastDate() ? "历史菜单" : "这天菜单"}</h2>
           <p>${viewable ? "按餐次看菜、原料和简单做法。" : "老婆确认后，这里会显示完整订单。"}</p>
         </div>
       </div>
@@ -1552,7 +1552,7 @@ function submitOrder() {
   plan.notificationUnread = true;
   saveState();
   render();
-  toast("已下单，老公工作台会收到提醒");
+  toast("已下单，老公厨房会收到提醒");
 }
 
 function markNotificationRead() {
