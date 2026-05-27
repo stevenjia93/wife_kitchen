@@ -158,7 +158,11 @@ function normalizeLines(value) {
 
 function normalizeInstructions(value) {
   const list = flattenInstructions(value);
-  return list.map((item) => cleanText(firstText(item))).filter(Boolean).slice(0, 20);
+  return list
+    .flatMap((item) => splitInstructionText(firstText(item)))
+    .map((item) => cleanText(item))
+    .filter(Boolean)
+    .slice(0, 20);
 }
 
 function flattenInstructions(value) {
@@ -179,6 +183,16 @@ function parseDurationMinutes(value) {
   const minutes = text.match(/(\d+)\s*(分钟|分|min|minutes?)/i);
   if (minutes) return Number(minutes[1]) || 0;
   return 0;
+}
+
+function splitInstructionText(value) {
+  const text = cleanText(value);
+  if (!text) return [];
+  const parts = text
+    .split(/(?=\d+[.．、]\s*)/g)
+    .map((item) => item.replace(/^\d+[.．、]\s*/, "").trim())
+    .filter(Boolean);
+  return parts.length > 1 ? parts : [text];
 }
 
 function firstText(value) {
