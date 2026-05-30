@@ -1,8 +1,39 @@
 const STORAGE_KEY = "wife-kitchen-prototype-v1";
 const HOUSEHOLD_SESSION_KEY = "wife-kitchen-household-session-v1";
 const SUPABASE_CDN = "https://esm.sh/@supabase/supabase-js@2";
-const SUPABASE_CONFIG = window.WIFE_KITCHEN_CONFIG || {};
+const FORCE_LOCAL_MODE = new URLSearchParams(location.search).has("local");
+const SUPABASE_CONFIG = FORCE_LOCAL_MODE ? {} : window.WIFE_KITCHEN_CONFIG || {};
 const MEAL_PHOTO_LIMIT = 12;
+const photoStatusValues = ["idle", "loading", "done", "failed"];
+const shoppingGroupOrder = ["肉蛋", "海鲜", "蛋奶", "蔬菜", "主食", "干货", "饮品", "调味", "其他"];
+const unitAliases = {
+  g: "克",
+  G: "克",
+  kg: "千克",
+  KG: "千克",
+  公斤: "千克",
+  ml: "毫升",
+  ML: "毫升",
+  mL: "毫升"
+};
+const ingredientAliases = [
+  ["生抽", ["生抽", "薄盐生抽"]],
+  ["老抽", ["老抽"]],
+  ["酱油", ["煲仔饭酱油", "蒸鱼豉油", "酱油"]],
+  ["蚝油", ["蚝油"]],
+  ["料酒", ["料酒", "黄酒"]],
+  ["豆瓣酱", ["郫县豆瓣酱", "豆瓣酱"]],
+  ["芝麻油", ["芝麻油", "香油"]],
+  ["食用油", ["食用油", "植物油", "菜籽油", "花生油", "玉米油", "油"]],
+  ["盐", ["食盐", "海盐", "盐"]],
+  ["冰糖", ["冰糖"]],
+  ["白糖", ["白糖", "砂糖", "细砂糖"]],
+  ["醋", ["米醋", "陈醋", "香醋", "白醋", "醋"]],
+  ["淀粉", ["玉米淀粉", "土豆淀粉", "淀粉"]],
+  ["胡椒粉", ["白胡椒粉", "黑胡椒粉", "胡椒粉"]],
+  ["辣椒粉", ["辣椒面", "辣椒粉"]],
+  ["番茄酱", ["番茄酱"]]
+];
 
 const online = {
   enabled: Boolean(SUPABASE_CONFIG.supabaseUrl && SUPABASE_CONFIG.supabaseAnonKey),
@@ -319,12 +350,68 @@ function normalizeMealPhoto(photo = {}) {
     : Array.isArray(photo.dishIds)
       ? photo.dishIds.map((id) => `dish:${id}`).filter(Boolean)
       : [];
+  const analysis = normalizeMealAnalysis(photo.analysis);
+  const analysisStatus = normalizePhotoStatus(photo.analysisStatus || (analysis ? "done" : "idle"));
+  const shareImage = String(photo.shareImage || "").trim();
   return {
     id: photo.id || `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     image,
     targetKeys,
-    createdAt: photo.createdAt || new Date().toISOString()
+    createdAt: photo.createdAt || new Date().toISOString(),
+    analysis,
+    analysisStatus,
+    analysisError: String(photo.analysisError || "").trim(),
+    shareImage,
+    shareStatus: normalizePhotoStatus(photo.shareStatus || (shareImage ? "done" : "idle")),
+    shareError: String(photo.shareError || "").trim(),
+    shareCreatedAt: photo.shareCreatedAt || null
   };
+}
+
+function normalizePhotoStatus(value) {
+  return photoStatusValues.includes(value) ? value : "idle";
+}
+
+function normalizeMealAnalysis(value) {
+  if (!value || typeof value !== "object") return null;
+  const items = Array.isArray(value.items)
+    ? value.items.map(normalizeCalorieItem).filter((item) => item.bbox.width > 0.02 && item.bbox.height > 0.02)
+    : [];
+  const total = items.reduce((sum, item) => sum + item.calories, 0);
+  return {
+    totalCalories: clampNumber(Number(value.totalCalories) || total, 0, 6000),
+    confidence: normalizeConfidence(value.confidence),
+    notes: String(value.notes || "根据照片做粗略估算，实际热量会受份量和做法影响。").trim().slice(0, 140),
+    items
+  };
+}
+
+function normalizeCalorieItem(item = {}) {
+  return {
+    label: String(item.label || "食物").trim().slice(0, 24),
+    portion: String(item.portion || "可见份量").trim().slice(0, 24),
+    calorieReason: String(item.calorieReason || "按照片估算").trim().slice(0, 32),
+    calories: clampNumber(Number(item.calories) || 0, 0, 2500),
+    confidence: normalizeConfidence(item.confidence),
+    bbox: normalizeBox(item.bbox)
+  };
+}
+
+function normalizeBox(box = {}) {
+  const x = clampNumber(Number(box.x) || 0, 0, 1);
+  const y = clampNumber(Number(box.y) || 0, 0, 1);
+  const width = clampNumber(Number(box.width) || 0, 0, 1 - x);
+  const height = clampNumber(Number(box.height) || 0, 0, 1 - y);
+  return { x, y, width, height };
+}
+
+function normalizeConfidence(value) {
+  return ["low", "medium", "high"].includes(value) ? value : "medium";
+}
+
+function clampNumber(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
 }
 
 function normalizeWish(wish = {}) {
@@ -352,7 +439,8 @@ function createDefaultState() {
       [todayKey()]: emptyPlan()
     },
     feedback: {},
-    checkedItems: {}
+    checkedItems: {},
+    shoppingGroupCollapsed: {}
   };
 }
 
@@ -379,6 +467,10 @@ function normalizeAppState(value = {}) {
     dishes: Array.isArray(value.dishes) ? value.dishes : base.dishes,
     feedback: value.feedback && typeof value.feedback === "object" ? value.feedback : {},
     checkedItems: value.checkedItems && typeof value.checkedItems === "object" ? value.checkedItems : {},
+    shoppingGroupCollapsed:
+      value.shoppingGroupCollapsed && typeof value.shoppingGroupCollapsed === "object"
+        ? value.shoppingGroupCollapsed
+        : {},
     plans: {
       ...base.plans,
       ...(value.plans || {})
@@ -629,6 +721,7 @@ function filteredDishes() {
 }
 
 function formatIngredient(item) {
+  if (item.amountText) return `${item.amountText}${item.name}`;
   if (item.amount === null || item.amount === undefined || item.amount === "") return item.name;
   return `${item.name} ${item.amount}${item.unit || ""}`;
 }
@@ -647,34 +740,135 @@ function aggregateShoppingList(plan = ensureTodayPlan()) {
     const dish = getDish(id);
     if (!dish) continue;
     for (const item of dish.ingredients) {
-      const key = `${item.group || "其他"}|${item.name}|${item.unit || ""}`;
+      const normalized = normalizeShoppingIngredient(item);
+      const key = `${normalized.group}|${normalized.keyName}`;
       const current = map.get(key) || {
         key,
-        name: item.name,
-        unit: item.unit || "",
-        group: item.group || "其他",
-        amount: 0,
-        countable: true,
+        name: normalized.name,
+        group: normalized.group,
+        amounts: {},
+        looseAmounts: [],
         dishes: []
       };
-      if (typeof item.amount === "number" && Number.isFinite(item.amount)) {
-        current.amount += item.amount;
+      if (typeof normalized.amount === "number" && Number.isFinite(normalized.amount)) {
+        current.amounts[normalized.unit] = (current.amounts[normalized.unit] || 0) + normalized.amount;
       } else {
-        current.countable = false;
+        current.looseAmounts.push(normalized.amountText || "按需");
       }
       current.dishes.push(dish.name);
       map.set(key, current);
     }
   }
-  return Array.from(map.values()).sort((a, b) => a.group.localeCompare(b.group, "zh-CN"));
+  return Array.from(map.values()).sort((a, b) => {
+    const groupDiff = shoppingGroupSortValue(a.group) - shoppingGroupSortValue(b.group);
+    return groupDiff || a.name.localeCompare(b.name, "zh-CN");
+  });
 }
 
 function groupedShoppingList(shopping = aggregateShoppingList()) {
-  return shopping.reduce((groups, item) => {
-    if (!groups[item.group]) groups[item.group] = [];
-    groups[item.group].push(item);
-    return groups;
+  const groups = shopping.reduce((result, item) => {
+    if (!result[item.group]) result[item.group] = [];
+    result[item.group].push(item);
+    return result;
   }, {});
+  return Object.entries(groups).sort(
+    ([groupA], [groupB]) => shoppingGroupSortValue(groupA) - shoppingGroupSortValue(groupB)
+  );
+}
+
+function normalizeShoppingIngredient(item = {}) {
+  const loose = parseLooseIngredient(String(item.name || "").trim());
+  const sourceName = loose.name || String(item.name || "").trim();
+  const name = canonicalIngredientName(sourceName);
+  const amount = typeof item.amount === "number" && Number.isFinite(item.amount) ? item.amount : loose.amount;
+  const unit = normalizeShoppingUnit(item.unit || loose.unit || "");
+  const guessedGroup = guessGroup(name || sourceName || item.group || "其他");
+  const group = item.group && item.group !== "其他" ? item.group : guessedGroup;
+  return {
+    name: name || sourceName || "食材",
+    keyName: normalizeIngredientKey(name || sourceName || "食材"),
+    amount,
+    amountText: item.amountText || loose.amountText,
+    unit,
+    group
+  };
+}
+
+function parseLooseIngredient(value = "") {
+  const text = value
+    .replace(/[，,。；;：:].*$/, "")
+    .replace(/[（(].*?[）)]/g, "")
+    .trim();
+  if (!text) return { name: "", amount: null, unit: "", amountText: "" };
+
+  const prefixWord = text.match(/^(少许|适量|适当|若干|一?点点|一?小撮|一?小勺|一?大勺|一?勺|半勺|半个|半罐|按需)\s*(.+)$/);
+  if (prefixWord) {
+    return {
+      name: prefixWord[2].trim(),
+      amount: null,
+      unit: "",
+      amountText: normalizeAmountText(prefixWord[1])
+    };
+  }
+
+  const unitPattern = "(千克|公斤|克|g|G|毫升|ml|ML|mL|升|大勺|小勺|勺|个|颗|瓣|片|根|罐|份|撮|把|碗|袋|包)?";
+  const prefixNumber = text.match(new RegExp(`^(\\d+(?:\\.\\d+)?|半)\\s*${unitPattern}\\s*(.+)$`));
+  if (prefixNumber && prefixNumber[3]) {
+    const amount = prefixNumber[1] === "半" ? 0.5 : Number(prefixNumber[1]);
+    return {
+      name: prefixNumber[3].trim(),
+      amount,
+      unit: normalizeShoppingUnit(prefixNumber[2]),
+      amountText: ""
+    };
+  }
+
+  const suffixNumber = text.match(
+    /^(.*?)\s*(\d+(?:\.\d+)?)\s*(千克|公斤|克|g|G|毫升|ml|ML|mL|升|大勺|小勺|勺|个|颗|瓣|片|根|罐|份|撮|把|碗|袋|包)$/
+  );
+  if (suffixNumber) {
+    return {
+      name: suffixNumber[1].trim(),
+      amount: Number(suffixNumber[2]),
+      unit: normalizeShoppingUnit(suffixNumber[3]),
+      amountText: ""
+    };
+  }
+
+  return { name: text, amount: null, unit: "", amountText: "" };
+}
+
+function canonicalIngredientName(value = "") {
+  const compact = String(value)
+    .replace(/\s+/g, "")
+    .replace(/^[·•\-—]+/, "")
+    .trim();
+  if (!compact) return "";
+  for (const [canonical, aliases] of ingredientAliases) {
+    if (aliases.some((alias) => compact.includes(alias))) return canonical;
+  }
+  return compact.replace(/^(一点|少许|适量|适当|若干)/, "");
+}
+
+function normalizeIngredientKey(value = "") {
+  return canonicalIngredientName(value).toLowerCase();
+}
+
+function normalizeShoppingUnit(value = "") {
+  const unit = String(value || "").trim();
+  return unitAliases[unit] || unit;
+}
+
+function normalizeAmountText(value = "") {
+  if (!value || value === "按需") return "按需";
+  if (value.includes("适")) return "适量";
+  if (value.includes("少") || value.includes("点") || value.includes("撮")) return "少许";
+  return value;
+}
+
+function shoppingGroupSortValue(group) {
+  const index = shoppingGroupOrder.indexOf(group);
+  return index === -1 ? shoppingGroupOrder.length : index;
 }
 
 function mealResolved(plan, meal) {
@@ -1235,12 +1429,13 @@ function renderAfterMealPhotoPanel(plan) {
   const photos = planPhotos(plan);
   const targets = planFoodTargets(plan);
   const canUpload = canUploadMealPhotos(plan);
+  const analyzedCount = photos.filter((photo) => photo.analysisStatus === "done" && photo.analysis).length;
   return `
     <section class="panel after-meal-panel" data-role="after-meal-panel">
       <div class="panel-header">
         <div>
-          <h2>饭后照片</h2>
-          <p>${photos.length ? `${photos.length} 张成品记录` : canUpload ? "拍一下今天做好的菜。" : "还没有上传照片。"}</p>
+          <h2>AI 热量线程</h2>
+          <p>${photos.length ? `${photos.length} 张照片，${analyzedCount} 张已估算` : canUpload ? "拍一张整桌照，自动识别大致热量。" : "还没有上传照片。"}</p>
         </div>
         <span class="photo-count">${photos.length}</span>
       </div>
@@ -1263,9 +1458,9 @@ function renderAfterMealPhotoPanel(plan) {
                   </select>
                 </label>
                 <label class="photo-upload-card">
-                  <input type="file" accept="image/*" capture="environment" multiple data-role="meal-photo-upload" />
-                  <strong>上传成品照</strong>
-                  <span>合照或单菜照都可以</span>
+                  <input type="file" accept="image/*" capture="environment" data-role="meal-photo-upload" />
+                  <strong>上传整桌照</strong>
+                  <span>自动圈出菜品并估算 kcal</span>
                 </label>
               </div>
             `
@@ -1287,8 +1482,11 @@ function renderMealPhotoCard(photo, targets, canRemove = false) {
   const targetKeys = photo.targetKeys || [];
   const shownTargets = targetKeys.length ? targetKeys : targets.map((target) => target.key);
   return `
-    <article class="meal-photo-card">
-      <img src="${escapeAttr(photo.image)}" alt="${escapeAttr(photoTargetLabel(photo, targets))}" loading="lazy" />
+    <article class="meal-photo-card calorie-thread-card">
+      <div class="meal-photo-frame">
+        <img src="${escapeAttr(photo.image)}" alt="${escapeAttr(photoTargetLabel(photo, targets))}" loading="lazy" />
+        ${renderCalorieOverlay(photo)}
+      </div>
       <div class="meal-photo-meta">
         <div>
           <strong>${escapeHtml(photoTargetLabel(photo, targets))}</strong>
@@ -1306,8 +1504,130 @@ function renderMealPhotoCard(photo, targets, canRemove = false) {
           .map((key) => `<span>${escapeHtml(photoTargetName(key, targets))}</span>`)
           .join("")}
       </div>
+      ${renderPhotoAnalysis(photo)}
     </article>
   `;
+}
+
+function renderCalorieOverlay(photo) {
+  const items = photo.analysis?.items || [];
+  if (photo.analysisStatus !== "done" || !items.length) return "";
+  return `
+    <div class="calorie-overlay" aria-hidden="true">
+      ${items
+        .slice(0, 8)
+        .map((item, index) => {
+          const box = item.bbox;
+          const x = box.x * 100;
+          const y = box.y * 100;
+          const width = box.width * 100;
+          const height = box.height * 100;
+          const labelLeft = clampNumber((box.x + box.width / 2) * 100, 10, 90);
+          const labelTop = clampNumber((box.y + Math.min(box.height * 0.18, 0.06)) * 100, 8, 88);
+          return `
+            <span class="calorie-ring ring-${index % 3}" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;width:${width.toFixed(2)}%;height:${height.toFixed(2)}%"></span>
+            <span class="calorie-bubble bubble-${index % 3}" style="left:${labelLeft.toFixed(2)}%;top:${labelTop.toFixed(2)}%">
+              <b>${escapeHtml(item.label)}</b>
+              <em>${Math.round(item.calories)} kcal</em>
+            </span>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderPhotoAnalysis(photo) {
+  if (photo.analysisStatus === "loading") {
+    return `
+      <div class="photo-analysis loading">
+        <div class="calorie-status-line"><span class="spinner"></span><strong>正在识别菜品和热量</strong></div>
+        <p>会按每盘可见份量粗估，完成后自动显示圈线和 kcal。</p>
+      </div>
+    `;
+  }
+
+  if (photo.analysisStatus === "failed") {
+    return `
+      <div class="photo-analysis failed">
+        <strong>热量估算失败</strong>
+        <p>${escapeHtml(photo.analysisError || "暂时没有识别成功，可以重新试一次。")}</p>
+        <button class="button wide" data-action="analyze-meal-photo" data-photo="${escapeAttr(photo.id)}">重新估算</button>
+      </div>
+    `;
+  }
+
+  if (!photo.analysis) {
+    return `
+      <div class="photo-analysis idle">
+        <p>还没有热量结果。</p>
+        <button class="button wide" data-action="analyze-meal-photo" data-photo="${escapeAttr(photo.id)}">估算热量</button>
+      </div>
+    `;
+  }
+
+  const analysis = photo.analysis;
+  return `
+    <div class="photo-analysis done">
+      <div class="calorie-summary">
+        <div>
+          <strong>${Math.round(analysis.totalCalories)}</strong>
+          <span>kcal 粗估</span>
+        </div>
+        <span class="confidence ${analysis.confidence}">${confidenceText(analysis.confidence)}</span>
+      </div>
+      <ul class="calorie-list">
+        ${analysis.items
+          .slice(0, 6)
+          .map(
+            (item) => `
+              <li>
+                <span>
+                  <b>${escapeHtml(item.label)}</b>
+                  <small>${escapeHtml(item.portion)} · ${escapeHtml(item.calorieReason)}</small>
+                </span>
+                <strong>${Math.round(item.calories)} kcal</strong>
+              </li>
+            `
+          )
+          .join("")}
+      </ul>
+      <p class="calorie-note">${escapeHtml(analysis.notes)}</p>
+      <div class="calorie-actions">
+        <button class="button" data-action="analyze-meal-photo" data-photo="${escapeAttr(photo.id)}" ${photo.analysisStatus === "loading" ? "disabled" : ""}>重新估算</button>
+        <button class="button primary" data-action="generate-meal-share" data-photo="${escapeAttr(photo.id)}" ${photo.shareStatus === "loading" ? "disabled" : ""}>
+          ${photo.shareStatus === "loading" ? "生成中" : photo.shareImage ? "重生成分享图" : "生成手绘图"}
+        </button>
+      </div>
+      ${renderShareImageBlock(photo)}
+    </div>
+  `;
+}
+
+function renderShareImageBlock(photo) {
+  if (photo.shareStatus === "loading") {
+    return `
+      <div class="share-image-block loading">
+        <div class="calorie-status-line"><span class="spinner"></span><strong>正在生成手绘分享图</strong></div>
+      </div>
+    `;
+  }
+  if (photo.shareStatus === "failed") {
+    return `<div class="share-image-block failed">${escapeHtml(photo.shareError || "分享图生成失败")}</div>`;
+  }
+  if (!photo.shareImage) return "";
+  return `
+    <div class="share-image-block">
+      <img src="${escapeAttr(photo.shareImage)}" alt="手绘风热量分享图" loading="lazy" />
+      <a class="button wide" href="${escapeAttr(photo.shareImage)}" download="meal-calorie-note.jpg">下载分享图</a>
+    </div>
+  `;
+}
+
+function confidenceText(value) {
+  if (value === "high") return "较可信";
+  if (value === "low") return "仅参考";
+  return "中等可信";
 }
 
 function renderWifeMealBlock(plan, meal) {
@@ -1394,6 +1714,9 @@ function renderHusbandView(plan) {
 }
 
 function renderNotificationPanel(plan) {
+  const shoppingCount = plan.submitted
+    ? aggregateShoppingList(plan).filter((item) => !isShoppingGroupCollapsed(item.group)).length
+    : 0;
   return `
     <section class="panel notice-panel ${plan.notificationUnread ? "unread" : ""}">
       <div class="panel-header">
@@ -1407,7 +1730,7 @@ function renderNotificationPanel(plan) {
         <div class="day-summary">
           <div class="stat"><strong>${selectedDishCount(plan) + wishCount(plan)}</strong><span>点单项</span></div>
           <div class="stat"><strong>${mealOrder.filter((meal) => plan.skipped[meal]).length}</strong><span>跳过</span></div>
-          <div class="stat"><strong>${plan.submitted ? aggregateShoppingList(plan).length : 0}</strong><span>采购项</span></div>
+          <div class="stat"><strong>${shoppingCount}</strong><span>采购项</span></div>
         </div>
       </div>
     </section>
@@ -1569,14 +1892,18 @@ function renderShoppingPanel(shopping, locked = false) {
           locked
             ? `<div class="empty-state">等待老婆确认下单。</div>`
             : shopping.length
-              ? Object.entries(groups)
+              ? groups
                   .map(
                     ([group, items]) => `
-                      <div class="shopping-group">
-                        <h3 class="shopping-group-title">${escapeHtml(group)}</h3>
-                        <ul class="shopping-list">
-                          ${items.map(renderShoppingItem).join("")}
-                        </ul>
+                      <div class="shopping-group ${isShoppingGroupCollapsed(group) ? "collapsed" : ""}">
+                        ${renderShoppingGroupHeader(group, items)}
+                        ${
+                          isShoppingGroupCollapsed(group)
+                            ? `<div class="shopping-group-empty">已收起，复制清单时不会包含这组。</div>`
+                            : `<ul class="shopping-list">
+                                ${items.map(renderShoppingItem).join("")}
+                              </ul>`
+                        }
                       </div>
                     `
                   )
@@ -1588,9 +1915,26 @@ function renderShoppingPanel(shopping, locked = false) {
   `;
 }
 
+function renderShoppingGroupHeader(group, items) {
+  const collapsed = isShoppingGroupCollapsed(group);
+  const total = items.length;
+  return `
+    <div class="shopping-group-title">
+      <div>
+        <h3>${escapeHtml(group)}</h3>
+        ${group === "调味" ? `<small>家里常备的话可以收起，不参与复制。</small>` : ""}
+      </div>
+      <button class="group-toggle" data-action="toggle-shopping-group" data-group="${escapeAttr(group)}" aria-expanded="${collapsed ? "false" : "true"}">
+        <span>${collapsed ? `展开 ${total}` : "收起"}</span>
+        <b>${collapsed ? "▾" : "▴"}</b>
+      </button>
+    </div>
+  `;
+}
+
 function renderShoppingItem(item) {
   const checked = state.checkedItems[selectedDateKey()]?.[item.key];
-  const amount = item.countable ? `${niceNumber(item.amount)}${item.unit}` : "按需";
+  const amount = formatShoppingAmount(item);
   const sources = Array.from(new Set(item.dishes)).join("、");
   return `
     <li class="shopping-item ${checked ? "done" : ""}">
@@ -1603,6 +1947,16 @@ function renderShoppingItem(item) {
       </div>
     </li>
   `;
+}
+
+function formatShoppingAmount(item) {
+  const numericParts = Object.entries(item.amounts || {})
+    .filter(([, amount]) => Number.isFinite(amount) && amount > 0)
+    .map(([unit, amount]) => `${niceNumber(amount)}${unit}`);
+  const looseParts = Array.from(new Set(item.looseAmounts || [])).filter((value) => value && value !== "按需");
+  const parts = [...numericParts, ...looseParts].slice(0, 3);
+  if (parts.length) return parts.join(" + ");
+  return "按需";
 }
 
 function renderMenuPanel() {
@@ -2139,6 +2493,7 @@ function clearToday() {
   }
   state.plans[selectedDateKey()] = emptyPlan();
   state.checkedItems[selectedDateKey()] = {};
+  if (state.shoppingGroupCollapsed?.[selectedDateKey()]) state.shoppingGroupCollapsed[selectedDateKey()] = {};
   saveState();
   render();
   toast("这一天的菜单已清空");
@@ -2184,6 +2539,7 @@ async function handleMealPhotoUpload(event) {
   const files = Array.from(input.files || []);
   if (!files.length) return;
 
+  const dateKey = selectedDateKey();
   const plan = ensureTodayPlan();
   if (!canUploadMealPhotos(plan)) {
     toast("今天确认下单后才能上传成品照");
@@ -2221,12 +2577,92 @@ async function handleMealPhotoUpload(event) {
     plan.afterPhotos = [...photos.filter(Boolean), ...existingPhotos].slice(0, MEAL_PHOTO_LIMIT);
     saveState();
     render();
-    toast(photos.length > 1 ? `已上传 ${photos.length} 张照片` : "照片已上传");
+    toast("照片已上传，开始估算热量");
+    for (const photo of photos.filter(Boolean)) {
+      await analyzeMealPhoto(photo.id, { dateKey, quiet: true });
+    }
   } catch (error) {
     toast(error.message || "照片处理失败");
   } finally {
     input.value = "";
   }
+}
+
+async function analyzeMealPhoto(photoId, options = {}) {
+  const dateKey = options.dateKey || selectedDateKey();
+  const includeShareImage = Boolean(options.includeShareImage);
+  const plan = state.plans[dateKey] ? normalizePlan(state.plans[dateKey]) : null;
+  const photo = planPhotos(plan).find((item) => item.id === photoId);
+  if (!plan || !photo) {
+    toast("没有找到这张照片");
+    return;
+  }
+
+  const loadingPatch = includeShareImage
+    ? { shareStatus: "loading", shareError: "" }
+    : { analysisStatus: "loading", analysisError: "" };
+  updateMealPhoto(dateKey, photoId, (item) => ({ ...item, ...loadingPatch }));
+
+  try {
+    const targets = planFoodTargets(plan);
+    const targetKeys = photo.targetKeys?.length ? photo.targetKeys : targets.map((target) => target.key);
+    const targetNames = targetKeys.map((key) => photoTargetName(key, targets)).filter(Boolean);
+    const response = await fetch("/api/analyze-meal-photo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image: photo.image,
+        targetNames,
+        includeShareImage,
+        analysis: includeShareImage ? photo.analysis : null
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "热量估算失败");
+    const shareImage = payload.shareImage
+      ? await compressImageDataUrl(payload.shareImage, { maxSide: 1400, quality: 0.8 })
+      : "";
+
+    updateMealPhoto(dateKey, photoId, (item) => ({
+      ...item,
+      analysis: payload.analysis,
+      analysisStatus: "done",
+      analysisError: "",
+      ...(includeShareImage
+        ? {
+            shareImage: shareImage || item.shareImage,
+            shareStatus: shareImage ? "done" : "idle",
+            shareError: "",
+            shareCreatedAt: shareImage ? new Date().toISOString() : item.shareCreatedAt
+          }
+        : {})
+    }));
+    if (!options.quiet) toast(includeShareImage ? "手绘分享图已生成" : "热量估算完成");
+  } catch (error) {
+    updateMealPhoto(dateKey, photoId, (item) => ({
+      ...item,
+      ...(includeShareImage
+        ? { shareStatus: "failed", shareError: error.message || "分享图生成失败" }
+        : { analysisStatus: "failed", analysisError: error.message || "热量估算失败" })
+    }));
+    toast(error.message || (includeShareImage ? "分享图生成失败" : "热量估算失败"));
+  }
+}
+
+function updateMealPhoto(dateKey, photoId, updater) {
+  const plan = state.plans[dateKey] ? normalizePlan(state.plans[dateKey]) : null;
+  if (!plan) return;
+  const photos = planPhotos(plan);
+  let changed = false;
+  plan.afterPhotos = photos.map((photo) => {
+    if (photo.id !== photoId) return photo;
+    changed = true;
+    return normalizeMealPhoto(updater(photo)) || photo;
+  });
+  if (!changed) return;
+  state.plans[dateKey] = plan;
+  saveState();
+  render();
 }
 
 function removeMealPhoto(photoId) {
@@ -2305,15 +2741,30 @@ function toggleBought(key) {
   render();
 }
 
+function isShoppingGroupCollapsed(group, day = selectedDateKey()) {
+  return Boolean(state.shoppingGroupCollapsed?.[day]?.[group]);
+}
+
+function toggleShoppingGroup(group) {
+  const day = selectedDateKey();
+  if (!state.shoppingGroupCollapsed) state.shoppingGroupCollapsed = {};
+  if (!state.shoppingGroupCollapsed[day]) state.shoppingGroupCollapsed[day] = {};
+  state.shoppingGroupCollapsed[day][group] = !state.shoppingGroupCollapsed[day][group];
+  saveState();
+  render();
+}
+
 async function copyShoppingList() {
   const plan = ensureTodayPlan();
-  const shopping = canViewOrder(plan) ? aggregateShoppingList(plan) : [];
+  const shopping = canViewOrder(plan)
+    ? aggregateShoppingList(plan).filter((item) => !isShoppingGroupCollapsed(item.group))
+    : [];
   if (!shopping.length) {
     toast("采购清单还是空的");
     return;
   }
   const lines = shopping.map((item) => {
-    const amount = item.countable ? `${niceNumber(item.amount)}${item.unit}` : "按需";
+    const amount = formatShoppingAmount(item);
     return `${item.name} ${amount}`;
   });
   const text = [`${dayLabel()}采购清单`, ...lines].join("\n");
@@ -2496,27 +2947,37 @@ function compressImageFile(file, options = {}) {
 
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("图片读取失败"));
-    reader.onload = () => {
-      const image = new Image();
-      image.onerror = () => reject(new Error("图片解析失败"));
-      image.onload = () => {
-        const maxSide = options.maxSide || 1200;
-        const quality = options.quality || 0.78;
-        const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
-        const width = Math.max(1, Math.round(image.width * ratio));
-        const height = Math.max(1, Math.round(image.height * ratio));
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const context = canvas.getContext("2d");
-        context.fillStyle = "#fff";
-        context.fillRect(0, 0, width, height);
-        context.drawImage(image, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", quality));
-      };
-      image.src = String(reader.result || "");
-    };
+    reader.onload = () => compressImageDataUrl(String(reader.result || ""), options).then(resolve, reject);
     reader.readAsDataURL(file);
+  });
+}
+
+function compressImageDataUrl(dataUrl, options = {}) {
+  return new Promise((resolve, reject) => {
+    const source = String(dataUrl || "");
+    if (!source.startsWith("data:image/")) {
+      reject(new Error("图片格式不正确"));
+      return;
+    }
+
+    const image = new Image();
+    image.onerror = () => reject(new Error("图片解析失败"));
+    image.onload = () => {
+      const maxSide = options.maxSide || 1200;
+      const quality = options.quality || 0.78;
+      const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
+      const width = Math.max(1, Math.round(image.width * ratio));
+      const height = Math.max(1, Math.round(image.height * ratio));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    image.src = source;
   });
 }
 
@@ -2525,19 +2986,31 @@ function parseIngredients(text) {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => {
-      const match = line.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*([^\d\s]+)?$/);
-      if (!match) {
-        return { name: line, amount: null, unit: "", group: guessGroup(line) };
-      }
-      const [, name, amount, unit = ""] = match;
-      return {
-        name: name.trim(),
-        amount: Number(amount),
-        unit: unit.trim(),
-        group: guessGroup(name)
-      };
-    });
+    .map(parseIngredientLine);
+}
+
+function parseIngredientLine(line) {
+  const match = line.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*([^\d\s]+)?$/);
+  if (match) {
+    const [, name, amount, unit = ""] = match;
+    const normalizedName = canonicalIngredientName(name.trim());
+    return {
+      name: normalizedName,
+      amount: Number(amount),
+      unit: normalizeShoppingUnit(unit),
+      group: guessGroup(normalizedName)
+    };
+  }
+
+  const loose = parseLooseIngredient(line);
+  const normalizedName = canonicalIngredientName(loose.name || line);
+  return {
+    name: normalizedName,
+    amount: loose.amount,
+    unit: loose.unit,
+    amountText: loose.amountText,
+    group: guessGroup(normalizedName || line)
+  };
 }
 
 function guessGroup(name) {
@@ -2623,7 +3096,10 @@ app.addEventListener("click", (event) => {
   if (action === "clear-today") clearToday();
   if (action === "feedback") setFeedback(actionTarget.dataset.dish, actionTarget.dataset.value);
   if (action === "toggle-bought") toggleBought(actionTarget.dataset.key);
+  if (action === "toggle-shopping-group") toggleShoppingGroup(actionTarget.dataset.group);
   if (action === "remove-meal-photo") removeMealPhoto(actionTarget.dataset.photo);
+  if (action === "analyze-meal-photo") analyzeMealPhoto(actionTarget.dataset.photo);
+  if (action === "generate-meal-share") analyzeMealPhoto(actionTarget.dataset.photo, { includeShareImage: true });
   if (action === "copy-list") copyShoppingList();
   if (action === "import-recipe-link") importRecipeFromLink(actionTarget);
   if (action === "toggle-skip") toggleMealSkip(actionTarget.dataset.meal);

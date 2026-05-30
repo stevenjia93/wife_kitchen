@@ -65,7 +65,8 @@ git push -u origin main
 4. Framework Preset 选择 Other。
 5. Build Command 留空。
 6. Output Directory 留空或填 `.`。
-7. Deploy。
+7. 在 Environment Variables 里添加 `OPENAI_API_KEY`；如果要固定模型，也可以添加 `OPENAI_VISION_MODEL=gpt-5.4-mini` 和 `OPENAI_IMAGE_MODEL=gpt-image-2`。
+8. Deploy。
 
 部署完成后，Vercel 会给你一个公开 URL。页面公开没关系，数据需要家庭码 + Supabase RLS 才能访问。
 
