@@ -1,0 +1,21 @@
+{
+  "pages": [
+    "pages/home/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "老婆点菜老公做",
+    "navigationBarBackgroundColor": "#f3f0e6",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f3f0e6",
+    "backgroundTextStyle": "dark"
+  },
+  "networkTimeout": {
+    "request": 120000,
+    "uploadFile": 120000,
+    "downloadFile": 120000
+  },
+  "__usePrivacyCheck__": true,
+  "lazyCodeLoading": "requiredComponents",
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

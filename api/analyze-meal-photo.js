@@ -4,6 +4,7 @@ const DEFAULT_MODEL = "gpt-5.4-mini";
 const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 
 async function handler(req, res) {
+  res.setHeader("Cache-Control", "no-store");
   if (req.method === "OPTIONS") {
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -42,6 +43,7 @@ async function analyzeMealPhoto(image, targetNames = []) {
     },
     body: JSON.stringify({
       model: process.env.OPENAI_VISION_MODEL || DEFAULT_MODEL,
+      store: false,
       input: [
         {
           role: "user",
@@ -191,20 +193,35 @@ async function generateMealShareImage(image, analysis) {
 function buildShareImagePrompt(analysis) {
   const itemLines = (analysis.items || [])
     .slice(0, 8)
-    .map((item, index) => `${index + 1}. ${item.label}，约 ${item.calories} kcal，${item.portion}`)
+    .map((item, index) => `${index + 1}. ${item.label}，约 ${item.calories} kcal，${item.portion}，位置：${boxPositionText(item.bbox)}`)
     .join("\n");
 
   return `
-编辑这张餐桌照片：保留原始食物、餐具、桌面和构图，不要替换菜品，不要新增不存在的食物。
+把这张餐桌照片编辑成可以发小红书的美食热量记录分享图。保留原始食物、餐具、桌面和构图，不要替换菜品，不要新增不存在的食物，不要把照片变成插画。
 
-在照片上添加小红书/ins 风格的白色手绘涂鸦标注：每道主要菜旁边用白色手绘圈线、箭头、可爱气泡和少量爱心/星星装饰圈出来。中文手写风标注要清晰、温馨、日常。
+视觉要求：
+1. 不要使用矩形检测框、边界框、UI 样式框或机器视觉风格。
+2. 用白色手绘虚线/实线沿着盘子边缘、碗边缘、食物外轮廓做不规则轮廓圈线，像用 Apple Pencil 手写涂鸦出来的。
+3. 每个菜用手绘箭头连接到旁边的圆角气泡或云朵气泡，气泡文字写菜名和 kcal。
+4. 加一个手写标题“今日份美食记录”或“今日热量记录”，搭配少量爱心、星星、波浪线、笑脸等轻量装饰。
+5. 中文手写风标注要清晰、可读、自然，像生活方式博主在照片上做笔记。
+6. 轮廓线和文字尽量不要遮住食物主体；如果空间不足，把文字放在空白桌面区域，用箭头指向食物。
+7. 画面保持真实照片质感，整体干净、精致、适合发布到小红书。
 
 必须标注这些热量估算：
 总计：约 ${analysis.totalCalories} kcal
 ${itemLines}
 
-画面风格参考：白色涂鸦线条、手写中文、轻松治愈、像美食日记。文字尽量贴近对应菜品，不要遮住食物主体。热量是粗略估算，请在角落加一行小字“仅按照片粗估”。
+角落加一行小字“仅按照片粗估”。如果有多道菜，优先标注最明显的 3 到 6 道。
 `.trim();
+}
+
+function boxPositionText(box = {}) {
+  const x = clampNumber(box.x + box.width / 2, 0, 1);
+  const y = clampNumber(box.y + box.height / 2, 0, 1);
+  const horizontal = x < 0.34 ? "左侧" : x > 0.66 ? "右侧" : "中间";
+  const vertical = y < 0.34 ? "上方" : y > 0.66 ? "下方" : "中部";
+  return `${vertical}${horizontal}`;
 }
 
 function dataUrlToBlob(dataUrl) {

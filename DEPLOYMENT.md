@@ -1,86 +1,141 @@
-# 线上 MVP 部署步骤
+# 阿里云国内部署与备案步骤
 
-## 1. 创建 Supabase project
+目标架构：微信小程序/H5 → 已备案 HTTPS 域名 → 阿里云轻量服务器上的 Nginx → Docker 中的 Express + PostgreSQL。上线后不再依赖 Vercel 或 Supabase。
 
-1. 打开 Supabase，新建一个 project。
-2. 在 Authentication 设置里启用 Anonymous sign-ins。
-3. 打开 SQL Editor，粘贴并运行 `supabase-schema.sql`。
-4. 在 Project Settings -> API 里复制：
-   - Project URL
-   - anon/public key
+## 0. 先区分两类备案
 
-## 2. 配置前端
+1. **API 域名的 ICP 备案**：在阿里云完成。中国内地 ECS 上的接口域名必须先完成 ICP 备案或阿里云接入备案。
+2. **微信小程序备案**：在微信公众平台完成，不在阿里云办理。ICP 备案完成后，再在微信后台填写小程序备案和服务器域名。
 
-打开 `config.js`，填入 Supabase 配置：
+备案实名认证、短信/人脸核验、协议确认和最终提交必须由备案主体本人操作。
+
+## 1. 资源前置检查
+
+- 阿里云中国站账号已实名认证，备案主体与域名实名主体一致。
+- 域名后缀可备案，域名已实名认证且信息已同步。
+- ECS 位于中国内地，具有公网 IP，并满足阿里云当前备案实例时长和计费要求。
+- 推荐 RDS PostgreSQL 与 ECS 位于同地域、同 VPC；只开放内网白名单给 ECS，不开放公网 5432。
+- 为后端固定一个长期域名，例如 `kitchen.example.com`，不要把 ECS IP 写进小程序。
+
+## 2. 在阿里云申请 ICP 备案
+
+1. 打开阿里云 ICP 备案控制台，选择“开始备案”或“新增/接入其他服务”。
+2. 未备案域名选择首次备案/新增网站；已在其他服务商备案的域名选择“接入备案”。
+3. 服务类型选择网站，填写备案主体、负责人和网站信息。
+4. 接入信息选择目标 ECS 实例。
+5. 网站名称建议使用与家庭菜单工具一致、不过度商业化的名称；备注说明用于家庭成员菜单同步。
+6. 由备案主体本人完成证件、真实性核验、短信/人脸核验、协议确认和最终提交。
+7. 阿里云初审和管局审核通过后，再把域名解析到 ECS 公网 IP。
+8. 对外开通后按属地要求在 30 日内完成公安联网备案，并在 H5 页面底部展示备案号（如适用）。
+
+## 3. 配置 PostgreSQL
+
+当前轻量服务器的 2 核 2 GB/40 GB 配置足够小规模家庭使用。为避免新增费用，`compose.yaml` 会在同一台服务器启动 PostgreSQL，并使用 Docker 私有网络连接；数据库端口不映射到公网。
+
+在服务器 `/opt/wife-kitchen/.env.production` 中配置：
+
+```text
+PORT=3000
+TRUST_PROXY=true
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_DB=wife_kitchen
+POSTGRES_USER=wife_kitchen
+POSTGRES_PASSWORD=替换为至少32位随机密码
+DATABASE_SSL=disable
+DATABASE_POOL_MAX=10
+```
+
+需要更高可用性时再迁移到同地域 RDS PostgreSQL：设置 `DATABASE_URL`、RDS 内网白名单和 SSL 即可，应用代码无需改变。
+
+## 4. 部署 Express
+
+在 ECS 安装 Docker Engine 和 Docker Compose 插件，然后：
+
+```bash
+sudo mkdir -p /opt/wife-kitchen
+sudo chown "$USER" /opt/wife-kitchen
+cd /opt/wife-kitchen
+git clone 你的私有仓库地址 .
+cp .env.example .env.production
+```
+
+编辑 `.env.production` 后执行：
+
+```bash
+docker compose build
+docker compose run --rm app npm run migrate
+docker compose up -d
+curl http://127.0.0.1:3000/healthz
+```
+
+健康检查必须返回 `{"ok":true}`。`compose.yaml` 只把 3000 端口绑定到本机，公网只开放 Nginx 的 80/443。
+
+在 ICP 和 HTTPS 完成前，可以暂时使用 `deploy/nginx-http.conf.example` 通过公网 IP 做后端验收；这个 HTTP/IP 地址不能填入微信小程序合法域名，也不能作为正式生产入口。
+
+如果要保留原 Supabase 菜单数据，在首次启动新服务前临时为迁移命令注入旧项目的 `SUPABASE_URL` 和 `SUPABASE_SECRET_KEY`，执行：
+
+```bash
+docker compose run --rm app npm run migrate:supabase
+```
+
+核对数据后立即从服务器环境中删除 Supabase 变量。迁移脚本不会把密钥写入代码或数据库。
+
+## 5. 配置域名、HTTPS 与 Nginx
+
+1. ICP 通过后，将 `kitchen.example.com` 的 A 记录解析到 ECS 公网 IP。
+2. 申请并部署该域名的有效 TLS 证书。
+3. 根据 `deploy/nginx.conf.example` 创建 Nginx 站点，替换域名和证书路径。
+4. 安全组只开放 22（限制来源）、80、443；不要开放 3000 和 5432。
+5. 运行：
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+curl https://kitchen.example.com/healthz
+```
+
+## 6. 切换 H5 和微信小程序
+
+H5 与 API 同域部署，`config.js` 保持：
 
 ```js
-window.WIFE_KITCHEN_CONFIG = {
-  supabaseUrl: "https://qsbonrvstwgdirvfaxhu.supabase.co",
-  supabaseAnonKey: "你的 anon/public key"
-};
+window.WIFE_KITCHEN_CONFIG = { apiBase: "", onlineEnabled: true };
 ```
 
-项目 URL 不能填 Supabase 控制台地址，必须是 `https://项目 ref.supabase.co` 这种 API 地址。
+将 `miniprogram/app.js` 中的占位值替换为：
 
-`anon/public key` 可以出现在前端代码里，真正的数据隔离依赖 Supabase RLS。
-
-## 3. 本地验证在线模式
-
-```bash
-python3 -m http.server 5175 --bind 0.0.0.0
+```js
+apiBase: "https://kitchen.example.com"
 ```
 
-打开：
+在微信公众平台 → 开发管理 → 开发设置 → 服务器域名中，将以下域名配置为 `request` 合法域名：
 
 ```text
-http://127.0.0.1:5175/#wife
+https://kitchen.example.com
 ```
 
-输入一个家庭码，例如：
+不再配置 Supabase 或 Vercel 域名。当前小程序不使用 `web-view`，无需业务域名。
 
-```text
-home-kitchen-2026
-```
+## 7. 隐私与小程序备案
 
-另一台设备输入同一个家庭码，就会看到同一份菜单。
+- 在微信隐私保护指引中保留：相册（仅写入）、写入剪切板对应的“读取剪切板”声明、收集用户选中的照片或视频信息。
+- 联系方式使用 `stevenjia93@gmail.com`。
+- 补充文档上传 `miniprogram/privacy-notice.txt`。
+- 小程序前端没有第三方插件/SDK；阿里云和可选的 OpenAI 是服务端服务提供方，在补充文档披露。
+- 账号注销选择“小程序中未注册账号”；家庭码不是独立注册账号。
+- 微信小程序备案在微信公众平台由主体本人完成最终核验与提交。
 
-## 4. 推到 GitHub
+## 8. 发布前验收
 
-在 GitHub 新建一个 repository，然后在本地执行：
+1. 关闭 VPN/代理，用中国大陆手机网络请求 `/healthz`。
+2. 两台真机输入同一家庭码：A 修改菜单，B 下拉刷新后能看到更新。
+3. 验证菜谱搜索、图片代理；仅在配置 `OPENAI_API_KEY` 后测试 AI 照片功能。
+4. 验证隐私弹窗、相册写入、剪切板写入和选图权限。
+5. 微信开发者工具上传新版本，在微信公众平台提交审核；审核通过后由管理员发布。
 
-```bash
-git init
-git add .
-git commit -m "Build wife kitchen online MVP"
-git branch -M main
-git remote add origin https://github.com/YOUR_NAME/YOUR_REPO.git
-git push -u origin main
-```
+## 9. 回滚与退役
 
-## 5. 部署到 Vercel
-
-1. 打开 Vercel。
-2. New Project。
-3. 选择刚才的 GitHub repository。
-4. Framework Preset 选择 Other。
-5. Build Command 留空。
-6. Output Directory 留空或填 `.`。
-7. 在 Environment Variables 里添加 `OPENAI_API_KEY`；如果要固定模型，也可以添加 `OPENAI_VISION_MODEL=gpt-5.4-mini` 和 `OPENAI_IMAGE_MODEL=gpt-image-2`。
-8. Deploy。
-
-部署完成后，Vercel 会给你一个公开 URL。页面公开没关系，数据需要家庭码 + Supabase RLS 才能访问。
-
-## 6. MVP 使用方式
-
-- 老婆打开 `https://你的域名/#wife`
-- 老公打开 `https://你的域名/#husband`
-- 两个人输入同一个家庭码
-- 老婆确认下单后，老公端会同步看到订单
-- 朋友使用时，给他们一个不同的家庭码；同一个家庭码会进入同一份菜单数据
-
-## 注意事项
-
-- 第一版家庭码就是共享密码，建议设置得长一点。
-- 匿名登录如果用户清空浏览器数据，会生成一个新的匿名用户；只要还知道家庭码，就能重新加入家庭。
-- 不能把 Supabase service role key 放进前端或 GitHub，只能使用 anon/public key。
-- 后续如果要更正式，可以升级到手机号、邮箱或微信小程序登录。
+- 切换前保留原 Supabase 数据导出和旧版本一段观察期。
+- 国内服务验证通过后，从生产环境删除 Supabase/Vercel 密钥，不再把旧域名加入微信合法域名。
+- 若新版本异常，先在微信后台回滚上一正式版本；数据库不要删除，修复后再发布。

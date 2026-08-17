@@ -1,0 +1,95 @@
+page {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(236, 203, 149, 0.26), transparent 34%),
+    radial-gradient(circle at 86% 10%, rgba(130, 184, 143, 0.22), transparent 34%),
+    linear-gradient(145deg, #f3f0e6 0%, #e7efe8 48%, #f4dfe2 100%);
+  color: #171917;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+}
+
+button {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  line-height: 1.2;
+}
+
+button::after {
+  border: 0;
+}
+
+.page {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 24rpx 20rpx 48rpx;
+}
+
+.panel {
+  overflow: hidden;
+  border: 1rpx solid rgba(22, 24, 23, 0.12);
+  border-radius: 18rpx;
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow: 0 26rpx 70rpx rgba(74, 61, 42, 0.12);
+}
+
+.button {
+  display: flex;
+  box-sizing: border-box;
+  min-height: 76rpx;
+  align-items: center;
+  justify-content: center;
+  border: 1rpx solid rgba(22, 24, 23, 0.12);
+  border-radius: 14rpx;
+  background: rgba(255, 255, 255, 0.72);
+  color: #171917;
+  font-size: 28rpx;
+  font-weight: 800;
+}
+
+.button.primary {
+  border-color: rgba(195, 132, 64, 0.38);
+  background: linear-gradient(135deg, #efd7a7, #c69255);
+}
+
+.button.dark {
+  background: #171917;
+  color: #fff;
+}
+
+.button.ghost {
+  background: rgba(255, 255, 255, 0.42);
+  color: #6b716b;
+}
+
+.button.warn {
+  border-color: rgba(227, 90, 70, 0.32);
+  color: #d84a2b;
+}
+
+.muted {
+  color: #6d756e;
+}
+
+.empty {
+  border: 1rpx dashed rgba(22, 24, 23, 0.14);
+  border-radius: 16rpx;
+  background: rgba(255, 255, 255, 0.34);
+  color: #6d756e;
+  font-size: 26rpx;
+  line-height: 1.5;
+  padding: 28rpx;
+  text-align: center;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999rpx;
+  background: rgba(37, 111, 83, 0.1);
+  color: #47735a;
+  font-size: 22rpx;
+  font-weight: 800;
+  padding: 8rpx 14rpx;
+}

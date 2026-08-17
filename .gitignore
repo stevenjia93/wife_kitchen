@@ -1,8 +1,13 @@
 .DS_Store
+.env.local
+.env
+.env.production
 .vercel/
 .playwright-cli/
 node_modules/
+private.*.key
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .vercel
+miniprogram/project.private.config.json

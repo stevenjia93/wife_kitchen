@@ -3,8 +3,10 @@ const MAX_IMAGE_BYTES = 700_000;
 const MAX_STEP_IMAGE_BYTES = 220_000;
 const MAX_STEP_IMAGES = 20;
 const MAX_STEP_ITEMS = 20;
+const PAGE_FETCH_TIMEOUT_MS = 8000;
+const IMAGE_FETCH_TIMEOUT_MS = 3500;
 const USER_AGENT =
-  "Mozilla/5.0 (compatible; WifeKitchenRecipeImporter/1.0; +https://wifekitchen.vercel.app)";
+  "Mozilla/5.0 (compatible; WifeKitchenRecipeImporter/1.2)";
 
 async function handler(req, res) {
   if (req.method === "OPTIONS") {
@@ -21,21 +23,29 @@ async function handler(req, res) {
 
   try {
     const body = await readJsonBody(req);
-    const recipe = await importRecipeFromUrl(body.url);
+    const recipe = await importRecipeFromUrl(body.url, {
+      includeImages: body.includeImages !== false,
+      includeStepImages: body.includeStepImages !== false
+    });
     res.status(200).json({ recipe });
   } catch (error) {
     res.status(error.statusCode || 400).json({ error: error.message || "导入失败" });
   }
 }
 
-async function importRecipeFromUrl(rawUrl) {
+async function importRecipeFromUrl(rawUrl, options = {}) {
   const sourceUrl = normalizeSourceUrl(rawUrl);
+  const includeImages = options.includeImages !== false;
+  const includeStepImages = options.includeStepImages !== false;
+  const maxStepImages = Number.isFinite(options.maxStepImages) ? options.maxStepImages : MAX_STEP_IMAGES;
+  const maxStepImageBytes = Number.isFinite(options.maxStepImageBytes) ? options.maxStepImageBytes : MAX_STEP_IMAGE_BYTES;
   const response = await fetch(sourceUrl, {
     headers: {
       "user-agent": USER_AGENT,
       accept: "text/html,application/xhtml+xml",
       "accept-language": "zh-CN,zh;q=0.9,en;q=0.5"
-    }
+    },
+    signal: timeoutSignal(options.pageTimeoutMs || PAGE_FETCH_TIMEOUT_MS)
   });
 
   if (!response.ok) {
@@ -46,7 +56,15 @@ async function importRecipeFromUrl(rawUrl) {
   const recipe = parseRecipePage(html, sourceUrl);
   if (recipe.image) {
     recipe.imageUrl = recipe.image;
-    recipe.image = await fetchImageDataUrl(recipe.image, sourceUrl);
+    if (includeImages) {
+      const coverImage = await fetchImageDataUrl(
+        resizeXiachufangImageUrl(recipe.image),
+        sourceUrl,
+        options.maxImageBytes || MAX_IMAGE_BYTES,
+        options.imageTimeoutMs
+      );
+      recipe.image = coverImage || recipe.imageUrl;
+    }
   }
   if (Array.isArray(recipe.stepDetails)) {
     for (let index = 0; index < recipe.stepDetails.length; index += 1) {
@@ -54,8 +72,17 @@ async function importRecipeFromUrl(rawUrl) {
       if (!step?.image) continue;
       const originalImage = step.image;
       step.imageUrl = originalImage;
-      if (index < MAX_STEP_IMAGES) {
-        step.image = await fetchImageDataUrl(resizeXiachufangImageUrl(originalImage), sourceUrl, MAX_STEP_IMAGE_BYTES);
+      if (!includeStepImages) {
+        step.image = "";
+        continue;
+      }
+      if (index < maxStepImages) {
+        step.image = await fetchImageDataUrl(
+          resizeXiachufangImageUrl(originalImage),
+          sourceUrl,
+          maxStepImageBytes,
+          options.imageTimeoutMs
+        );
       } else {
         step.image = "";
       }
@@ -141,14 +168,15 @@ function parseRecipePage(html, sourceUrl) {
   };
 }
 
-async function fetchImageDataUrl(imageUrl, refererUrl, maxBytes = MAX_IMAGE_BYTES) {
+async function fetchImageDataUrl(imageUrl, refererUrl, maxBytes = MAX_IMAGE_BYTES, timeoutMs = IMAGE_FETCH_TIMEOUT_MS) {
   try {
     const response = await fetch(imageUrl, {
       headers: {
         "user-agent": USER_AGENT,
         accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         referer: refererUrl
-      }
+      },
+      signal: timeoutSignal(timeoutMs)
     });
     if (!response.ok) return "";
 
@@ -162,6 +190,15 @@ async function fetchImageDataUrl(imageUrl, refererUrl, maxBytes = MAX_IMAGE_BYTE
   } catch {
     return "";
   }
+}
+
+function timeoutSignal(timeoutMs) {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), timeoutMs);
+  return controller.signal;
 }
 
 function extractMetadata(html) {

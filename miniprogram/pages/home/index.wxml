@@ -1,0 +1,381 @@
+<view class="page">
+  <view class="topbar panel">
+    <view class="brand">
+      <view class="brand-mark">{{brandMark}}</view>
+      <view class="brand-copy">
+        <view class="eyebrow">Private Kitchen Brief</view>
+        <view class="title">{{navTitle}}</view>
+        <view class="subtitle">{{navSubtitle}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view wx:if="{{!householdCode}}" class="gate panel">
+    <view class="gate-title">输入家庭码</view>
+    <view class="gate-copy">同一个家庭码会进入同一份菜单和点餐记录。建议使用只有家里人知道的长一点的码。</view>
+    <input
+      class="gate-input"
+      value="{{householdInput}}"
+      placeholder="比如 home-kitchen-2026"
+      auto-focus="true"
+      bindinput="onHouseholdInput"
+    />
+    <button class="button primary" loading="{{syncing}}" bindtap="joinHousehold">进入家庭菜单</button>
+  </view>
+
+  <block wx:else>
+    <view class="date-card panel">
+      <view class="date-copy">
+        <view class="eyebrow">{{showHusband ? 'Kitchen Brief' : showMenu ? 'Menu Library' : 'Pick Session'}}</view>
+        <view class="date-title">{{dateTitle}}</view>
+        <view class="subtitle">{{dateMeta}}</view>
+      </view>
+      <view class="date-actions">
+        <button class="date-btn" data-days="-1" bindtap="shiftDate">‹</button>
+        <button class="date-btn today" bindtap="goToday">今天</button>
+        <button class="date-btn" data-days="1" bindtap="shiftDate">›</button>
+      </view>
+    </view>
+
+    <view class="sync-row">
+      <view class="pill">{{householdCode}}</view>
+      <view class="sync-actions">
+        <button class="share-house" open-type="share">分享</button>
+        <button class="switch-house" bindtap="leaveHousehold">切换家庭</button>
+      </view>
+    </view>
+
+    <block wx:if="{{showWife}}">
+      <view class="panel pick-panel">
+        <view class="meal-tabs">
+          <button
+            wx:for="{{mealTabs}}"
+            wx:key="key"
+            class="meal-tab {{item.active ? 'active' : ''}} {{item.skipped ? 'skipped' : ''}}"
+            data-meal="{{item.key}}"
+            bindtap="selectMeal"
+          >
+            <text>{{item.label}}</text>
+            <text wx:if="{{item.skipped}}">跳过</text>
+            <text wx:elif="{{item.count}}">{{item.count}}</text>
+          </button>
+        </view>
+        <view class="meal-line">
+          <view>
+            <view class="section-title">{{activeMealLabel}}</view>
+            <view class="subtitle">{{activeMealSkipped ? '这餐不需要做饭' : activeMealCount ? '已安排 ' + activeMealCount + ' 项' : '还没决定吃什么'}}</view>
+          </view>
+          <view class="meal-actions">
+            <button class="button primary compact" wx:if="{{!activeMealSkipped}}" bindtap="openMenuSheet">选择菜单</button>
+            <button class="button ghost compact {{activeMealSkipped ? 'active' : ''}}" bindtap="toggleSkip">
+              {{activeMealSkipped ? '恢复点餐' : '跳过此餐'}}
+            </button>
+          </view>
+        </view>
+        <view wx:if="{{activeMealItems.length}}" class="active-picks">
+          <view wx:for="{{activeMealItems}}" wx:key="id" class="active-pick">
+            <image wx:if="{{item.imageSrc}}" class="pick-thumb" src="{{item.imageSrc}}" mode="aspectFill"></image>
+            <view wx:else class="pick-thumb placeholder">{{item.imageInitial}}</view>
+            <view class="pick-copy">
+              <view class="order-name">{{item.name}}</view>
+              <view class="subtitle">{{item.meta}}</view>
+            </view>
+            <view wx:if="{{item.canRemove}}" class="remove-btn dish-remove-btn" data-id="{{item.id}}" data-meal="{{item.meal}}" bindtap="removeDish">×</view>
+          </view>
+        </view>
+      </view>
+
+      <view wx:if="{{activeMealSkipped}}" class="empty">已跳过{{activeMealLabel}}，这餐不会进入采购清单。</view>
+
+      <block wx:else>
+        <view wx:if="{{!menuDishes.length}}" class="empty">这个餐次暂无可选菜，可以先跳过或去“菜单”里添加新菜。</view>
+
+        <view class="quick-row">
+          <button class="button ghost" bindtap="randomDish">随便安排一道</button>
+        </view>
+
+        <view class="panel wish-box">
+          <view class="section-title">想吃菜单外的菜</view>
+          <view class="wish-row">
+            <input class="wish-input" value="{{wishName}}" placeholder="比如：蒜香排骨" bindinput="onWishNameInput" />
+            <button class="button dark wish-btn" bindtap="addWish">许愿</button>
+          </view>
+        </view>
+      </block>
+
+      <view class="panel order-panel">
+        <view class="panel-head">
+          <view>
+            <view class="section-title">这天选择</view>
+            <view class="subtitle">{{orderStatus}}</view>
+          </view>
+          <view class="pill">{{photoCount}} 图</view>
+        </view>
+        <view wx:for="{{wifeMeals}}" wx:key="meal" class="meal-summary">
+          <view class="meal-summary-head">
+            <text>{{item.label}}</text>
+            <text>{{item.skipped ? '已跳过' : item.empty ? '待定' : '已安排'}}</text>
+          </view>
+          <view wx:if="{{item.skipped}}" class="mini-empty">这餐不做饭。</view>
+          <view wx:elif="{{item.empty}}" class="mini-empty">还没有安排。</view>
+          <view wx:else>
+            <view wx:for="{{item.items}}" wx:key="id" class="order-item">
+              <image wx:if="{{item.imageSrc}}" class="order-thumb" src="{{item.imageSrc}}" mode="aspectFill"></image>
+              <view wx:else class="order-thumb placeholder">{{item.imageInitial}}</view>
+              <view class="order-copy">
+                <view class="order-name">{{item.name}}</view>
+                <view class="subtitle">{{item.ingredientText}}</view>
+              </view>
+              <view class="remove-btn dish-remove-btn" data-id="{{item.id}}" data-meal="{{item.meal}}" bindtap="removeDish">×</view>
+            </view>
+            <view wx:for="{{item.wishes}}" wx:key="id" class="order-item wish">
+              <view>
+                <view class="order-name">{{item.name}}</view>
+                <view class="subtitle">许愿菜</view>
+              </view>
+            </view>
+          </view>
+        </view>
+        <button class="button primary submit-btn" disabled="{{!canSubmit}}" bindtap="submitOrder">
+          {{canSubmit ? '确认下单' : '还有 ' + pendingText + ' 未决定'}}
+        </button>
+      </view>
+    </block>
+
+    <block wx:elif="{{showHusband}}">
+      <view class="panel cook-panel">
+        <view class="panel-head">
+          <view>
+            <view class="section-title">这天菜单</view>
+            <view class="subtitle">{{kitchenStatus}}</view>
+          </view>
+          <view class="panel-actions">
+            <button class="button ghost compact" bindtap="editMenuFromKitchen">点菜</button>
+            <button class="button dark compact" bindtap="goMenuManager">加菜</button>
+          </view>
+        </view>
+        <view wx:if="{{!canViewMenu}}" class="empty">还没有设定菜单，先点“调整菜单”安排今天吃什么。</view>
+        <block wx:else>
+          <view wx:for="{{husbandMeals}}" wx:key="meal" class="cook-meal">
+            <view class="meal-summary-head">
+              <text>{{item.label}}</text>
+              <text>{{item.skipped ? '老婆跳过' : item.empty ? '无安排' : '共 ' + item.totalCount + ' 项'}}</text>
+            </view>
+            <view wx:if="{{item.skipped}}" class="mini-empty">这餐不用准备，采购清单已自动排除。</view>
+            <view wx:elif="{{item.empty}}" class="mini-empty">这餐暂时没有安排。</view>
+            <view wx:else>
+              <view class="cook-card-grid">
+                <button wx:for="{{item.items}}" wx:key="id" class="cook-card visual-card" data-id="{{item.id}}" bindtap="openDishDetail">
+                  <image class="cook-cover" src="{{item.imageSrc}}" mode="aspectFill"></image>
+                  <view class="cook-overlay">
+                    <view class="cook-title">{{item.name}}</view>
+                    <view class="visual-meta">{{item.detailMeta}}</view>
+                  </view>
+                </button>
+              </view>
+              <view wx:for="{{item.wishes}}" wx:key="id" class="cook-card wish">
+                <view class="cook-title">{{item.name}}</view>
+                <view class="subtitle">老婆许愿菜，先按经验发挥。</view>
+              </view>
+            </view>
+          </view>
+        </block>
+      </view>
+
+      <view class="panel shopping-panel">
+        <view class="panel-head">
+          <view>
+            <view class="section-title">采购清单</view>
+            <view class="subtitle">自动合并同名食材。</view>
+          </view>
+          <button class="button ghost compact" bindtap="copyShoppingList">复制</button>
+        </view>
+        <view wx:if="{{!shoppingGroups.length}}" class="empty">今天没有需要采购的食材。</view>
+        <view wx:for="{{shoppingGroups}}" wx:key="group" class="shopping-group">
+          <view class="shopping-group-title">{{item.group}}</view>
+          <view wx:for="{{item.items}}" wx:key="key" class="shopping-item">
+            <view>
+              <view class="order-name">{{item.name}}</view>
+              <view class="subtitle">{{item.sourcesText}}</view>
+            </view>
+            <view class="amount">{{item.amountText}}</view>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <block wx:elif="{{showMenu}}">
+      <view class="panel menu-manager">
+        <view class="panel-head">
+          <view>
+            <view class="section-title">整理我的菜单</view>
+            <view class="subtitle">输入下厨房链接或菜名，自动补图片和原料。</view>
+          </view>
+        </view>
+        <view class="recipe-row">
+          <input class="recipe-input" value="{{recipeInput}}" placeholder="下厨房链接 / 番茄炒蛋" bindinput="onRecipeInput" />
+          <button class="button dark recipe-btn" loading="{{recipeLoading}}" bindtap="importRecipe">导入</button>
+        </view>
+      </view>
+
+      <view class="panel menu-library">
+        <view class="panel-head">
+          <view>
+            <view class="section-title">我的菜</view>
+            <view class="subtitle">{{managedDishes.length}} 道菜，可在点菜页加入三餐。</view>
+          </view>
+          <button class="button ghost compact" bindtap="switchRole" data-role="wife">去点菜</button>
+        </view>
+        <view wx:if="{{!managedDishes.length}}" class="empty">还没有菜，先从下厨房导入一道。</view>
+        <view wx:for="{{managedDishes}}" wx:key="id" class="managed-dish" data-id="{{item.id}}" bindtap="openDishDetail">
+          <image wx:if="{{item.imageSrc}}" class="managed-thumb" src="{{item.imageSrc}}" mode="aspectFill"></image>
+          <view wx:else class="managed-thumb placeholder">{{item.imageInitial}}</view>
+          <view class="managed-copy">
+            <view class="order-name">{{item.name}}</view>
+            <view class="subtitle">{{item.meta}}</view>
+            <view class="managed-ingredients">{{item.ingredientText}}</view>
+          </view>
+          <view class="managed-actions">
+            <button wx:if="{{item.sourceUrl}}" class="source-btn" data-url="{{item.sourceUrl}}" catchtap="copyRecipeSource">来源</button>
+            <view class="delete-menu-btn" data-id="{{item.id}}" catchtap="removeManagedDish">×</view>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <view class="panel photo-panel" wx:if="{{showPhotoPanel}}">
+      <view class="panel-head">
+        <view>
+          <view class="section-title">AI 热量估算</view>
+          <view class="subtitle">{{photoCount ? photoCount + ' 张照片，' + analyzedCount + ' 张已完成' : '拍一张整桌照，自动估算热量。'}}</view>
+        </view>
+        <view class="pill">{{photoCount}}</view>
+      </view>
+      <button wx:if="{{canUploadPhotos}}" class="upload-card" bindtap="uploadMealPhoto">
+        <text>上传整桌照</text>
+        <text>自动估算 kcal 并生成分享图</text>
+      </button>
+      <view wx:for="{{photos}}" wx:key="id" class="photo-card">
+        <view wx:if="{{item.displayImage}}" class="meal-photo-frame">
+          <image class="meal-photo-image {{item.isSharePreview ? 'contain' : ''}}" src="{{item.displayImage}}" mode="widthFix"></image>
+        </view>
+        <view wx:else class="meal-photo photo-placeholder">原图未保存</view>
+        <view class="photo-meta">
+          <view>
+            <view class="order-name">{{item.targetLabel}}</view>
+            <view class="subtitle">{{item.timeText}}</view>
+          </view>
+          <button wx:if="{{canUploadPhotos}}" class="remove-btn" data-id="{{item.id}}" bindtap="removePhoto">×</button>
+        </view>
+        <view wx:if="{{item.statusText}}" class="loading-line">{{item.statusText}}</view>
+        <view wx:elif="{{item.analysis}}" class="calorie-box">
+          <view>
+            <view class="calorie-number">{{item.totalCalories}}</view>
+            <view class="subtitle">kcal 粗估</view>
+          </view>
+          <view class="pill">{{item.confidenceText}}</view>
+        </view>
+        <view wx:if="{{item.canSaveShare || item.canGenerateShare}}" class="photo-actions">
+          <button wx:if="{{item.canSaveShare}}" class="button primary compact" data-id="{{item.id}}" bindtap="saveSharePhoto">保存分享图</button>
+          <button wx:else class="button ghost compact" data-id="{{item.id}}" bindtap="generateSharePhoto">{{item.generateShareText}}</button>
+        </view>
+        <view wx:if="{{item.analysisItems.length}}" class="calorie-list">
+          <view wx:for="{{item.analysisItems}}" wx:key="label" class="calorie-item">
+            <text>{{item.label}} · {{item.portion}}</text>
+            <text>{{item.calories}} kcal</text>
+          </view>
+        </view>
+        <button wx:if="{{item.analysisStatus === 'failed'}}" class="button ghost" data-id="{{item.id}}" bindtap="retryPhoto">重新估算</button>
+      </view>
+    </view>
+
+    <view class="bottom-tabs">
+      <button class="bottom-tab {{showWife ? 'active' : ''}}" data-tab="wife" bindtap="switchTab">
+        <text class="tab-icon">点</text>
+        <text>点菜</text>
+      </button>
+      <button class="bottom-tab {{showHusband ? 'active' : ''}}" data-tab="husband" bindtap="switchTab">
+        <text class="tab-icon">厨</text>
+        <text>厨房</text>
+      </button>
+      <button class="bottom-tab {{showMenu ? 'active' : ''}}" data-tab="menu" bindtap="switchTab">
+        <text class="tab-icon">菜</text>
+        <text>菜单</text>
+      </button>
+    </view>
+
+    <view wx:if="{{menuOpen}}" class="menu-mask" bindtap="closeMenuSheet">
+      <view class="menu-sheet" catchtap="noop">
+        <view class="menu-sheet-head">
+          <view>
+            <view class="section-title">选择{{activeMealLabel}}</view>
+            <view class="subtitle">{{dateTitle}} · 点一下直接加入</view>
+          </view>
+          <button class="sheet-close" bindtap="closeMenuSheet">×</button>
+        </view>
+        <scroll-view class="menu-list" scroll-y="true">
+          <view class="menu-card-grid">
+            <button
+              wx:for="{{menuDishes}}"
+              wx:key="id"
+              class="menu-card {{item.selected ? 'selected' : ''}}"
+              data-id="{{item.id}}"
+              bindtap="addDishFromMenu"
+            >
+              <image wx:if="{{item.imageSrc}}" class="menu-card-image" src="{{item.imageSrc}}" mode="aspectFill"></image>
+              <view wx:else class="menu-card-image placeholder">{{item.imageInitial}}</view>
+              <view class="menu-card-body">
+                <view class="menu-card-title">{{item.name}}</view>
+                <view class="menu-card-meta">{{item.meta}}</view>
+                <view class="menu-card-action">{{item.selected ? '已选' : '加入'}}</view>
+              </view>
+            </button>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
+
+    <view wx:if="{{detailOpen}}" class="detail-mask" bindtap="closeDishDetail">
+      <view class="dish-detail-sheet" catchtap="noop">
+        <scroll-view class="detail-scroll" scroll-y="true">
+          <view class="detail-hero">
+            <image class="detail-hero-image" src="{{detailDish.imageSrc}}" mode="aspectFill"></image>
+            <button class="sheet-close detail-close" bindtap="closeDishDetail">×</button>
+          </view>
+          <view class="detail-content">
+            <view class="detail-title-row">
+              <view class="detail-title-main">
+                <view class="detail-name">{{detailDish.name}}</view>
+                <view class="subtitle">{{detailDish.meta}}</view>
+              </view>
+              <view class="pill">{{detailDish.category}}</view>
+            </view>
+            <view class="detail-note">{{detailDish.note}}</view>
+
+            <view class="detail-section">
+              <view class="mini-label">原料</view>
+              <view class="ingredient-tags">
+                <text class="ingredient-tag" wx:for="{{detailDish.ingredients}}" wx:key="text">{{item.text}}</text>
+              </view>
+            </view>
+
+            <view class="detail-section">
+              <view class="mini-label">做法</view>
+              <view wx:for="{{detailDish.steps}}" wx:key="index" class="step-card">
+                <view class="step-index">{{item.index}}</view>
+                <view class="step-body">
+                  <image wx:if="{{item.imageSrc}}" class="step-image" src="{{item.imageSrc}}" mode="aspectFill"></image>
+                  <view class="step-text">{{item.text}}</view>
+                </view>
+              </view>
+            </view>
+
+            <button wx:if="{{detailDish.sourceUrl}}" class="button primary detail-source" data-url="{{detailDish.sourceUrl}}" bindtap="copyRecipeSource">复制下厨房链接</button>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
+  </block>
+
+  <button class="privacy-contract-link" bindtap="openPrivacyContract">隐私保护指引</button>
+</view>

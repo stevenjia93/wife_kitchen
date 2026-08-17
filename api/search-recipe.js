@@ -1,9 +1,12 @@
 const importRecipeApi = require("./import-recipe.js");
 
 const MAX_SEARCH_HTML_CHARS = 1_000_000;
-const SEARCH_IMPORT_LIMIT = 5;
+const SEARCH_IMPORT_LIMIT = 2;
+const SEARCH_FETCH_TIMEOUT_MS = 6500;
+const RECIPE_FETCH_TIMEOUT_MS = 9000;
+const RECIPE_IMAGE_TIMEOUT_MS = 6500;
 const USER_AGENT =
-  "Mozilla/5.0 (compatible; WifeKitchenRecipeSearcher/1.0; +https://wifekitchen.vercel.app)";
+  "Mozilla/5.0 (compatible; WifeKitchenRecipeSearcher/1.2)";
 
 const { importRecipeFromUrl } = importRecipeApi._internals;
 
@@ -29,7 +32,8 @@ async function handler(req, res) {
         "user-agent": USER_AGENT,
         accept: "text/html,application/xhtml+xml",
         "accept-language": "zh-CN,zh;q=0.9,en;q=0.5"
-      }
+      },
+      signal: timeoutSignal(SEARCH_FETCH_TIMEOUT_MS)
     });
 
     if (!response.ok) throw httpError("下厨房搜索暂时不可用", 502);
@@ -39,33 +43,49 @@ async function handler(req, res) {
     const candidates = extractSearchCandidates(html, searchUrl, query);
     if (!candidates.length) throw httpError("没找到合适的下厨房菜谱", 404);
 
-    const recipe = await importBestRecipe(candidates, query);
+    const recipe = await importBestRecipe(candidates, query, {
+      includeImages: body.includeImages !== false,
+      includeStepImages: body.includeStepImages !== false
+    });
     if (!recipe) throw httpError("找到了候选菜谱，但详情暂时无法读取", 502);
 
     res.status(200).json({ recipe, candidates: candidates.slice(0, 3) });
   } catch (error) {
-    res.status(error.statusCode || 400).json({ error: error.message || "搜索失败" });
+    const timedOut = error.name === "AbortError" || /timeout|aborted/i.test(error.message || "");
+    res.status(error.statusCode || (timedOut ? 504 : 400)).json({
+      error: timedOut ? "找菜超时了，请点重新找或直接挑战" : error.message || "搜索失败"
+    });
   }
 }
 
-async function importBestRecipe(candidates, query) {
+async function importBestRecipe(candidates, query, options = {}) {
   let best = null;
   const ranked = candidates.slice(0, SEARCH_IMPORT_LIMIT);
 
   for (const candidate of ranked) {
     try {
-      const recipe = await importRecipeFromUrl(candidate.url);
+      const recipe = await importRecipeFromUrl(candidate.url, {
+        includeImages: options.includeImages !== false,
+        includeStepImages: options.includeStepImages !== false,
+        pageTimeoutMs: RECIPE_FETCH_TIMEOUT_MS,
+        imageTimeoutMs: RECIPE_IMAGE_TIMEOUT_MS,
+        maxImageBytes: 520_000,
+        maxStepImages: 5,
+        maxStepImageBytes: 180_000
+      });
       const score = candidate.score + scoreRecipeCompleteness(recipe, query);
+      const enrichedRecipe = {
+        ...recipe,
+        sourceUrl: recipe.sourceUrl || candidate.url,
+        searchTitle: candidate.title,
+        searchRating: candidate.rating,
+        searchCookedCount: candidate.cookedCount
+      };
+      if (isUsefulRecipe(enrichedRecipe)) return enrichedRecipe;
       if (!best || score > best.score) {
         best = {
           score,
-          recipe: {
-            ...recipe,
-            sourceUrl: recipe.sourceUrl || candidate.url,
-            searchTitle: candidate.title,
-            searchRating: candidate.rating,
-            searchCookedCount: candidate.cookedCount
-          }
+          recipe: enrichedRecipe
         };
       }
     } catch {
@@ -74,6 +94,13 @@ async function importBestRecipe(candidates, query) {
   }
 
   return best?.recipe || null;
+}
+
+function isUsefulRecipe(recipe) {
+  return Boolean(
+    recipe?.sourceUrl &&
+      (recipe.name || (Array.isArray(recipe.ingredients) && recipe.ingredients.length) || (Array.isArray(recipe.steps) && recipe.steps.length))
+  );
 }
 
 function extractSearchCandidates(html, searchUrl, query) {
@@ -209,6 +236,15 @@ function decodeHtml(value) {
     .replace(/&#39;/g, "'")
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)));
+}
+
+function timeoutSignal(timeoutMs) {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(timeoutMs);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), timeoutMs);
+  return controller.signal;
 }
 
 function httpError(message, statusCode) {

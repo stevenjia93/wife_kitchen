@@ -1,9 +1,16 @@
 const STORAGE_KEY = "wife-kitchen-prototype-v1";
 const HOUSEHOLD_SESSION_KEY = "wife-kitchen-household-session-v1";
-const SUPABASE_CDN = "https://esm.sh/@supabase/supabase-js@2";
 const FORCE_LOCAL_MODE = new URLSearchParams(location.search).has("local");
-const SUPABASE_CONFIG = FORCE_LOCAL_MODE ? {} : window.WIFE_KITCHEN_CONFIG || {};
-const MEAL_PHOTO_LIMIT = 12;
+const APP_CONFIG = FORCE_LOCAL_MODE ? {} : window.WIFE_KITCHEN_CONFIG || {};
+const API_BASE = String(APP_CONFIG.apiBase || "").replace(/\/+$/, "");
+const REMOTE_POLL_INTERVAL_MS = 5000;
+const MEAL_PHOTO_LIMIT = 6;
+const MEAL_PHOTO_IMAGE_OPTIONS = { maxSide: 800, quality: 0.62 };
+const SHARE_IMAGE_OPTIONS = { maxSide: 900, quality: 0.66 };
+const DEFAULT_IMAGE_OPTIONS = { maxSide: 900, quality: 0.68 };
+const PHOTO_PROCESSING_STALE_MS = 90 * 1000;
+const WISH_SEARCH_TIMEOUT_MS = 55 * 1000;
+const WISH_SEARCH_STALE_MS = 120 * 1000;
 const photoStatusValues = ["idle", "loading", "done", "failed"];
 const shoppingGroupOrder = ["肉蛋", "海鲜", "蛋奶", "蔬菜", "主食", "干货", "饮品", "调味", "其他"];
 const unitAliases = {
@@ -36,9 +43,7 @@ const ingredientAliases = [
 ];
 
 const online = {
-  enabled: Boolean(SUPABASE_CONFIG.supabaseUrl && SUPABASE_CONFIG.supabaseAnonKey),
-  client: null,
-  user: null,
+  enabled: !FORCE_LOCAL_MODE && APP_CONFIG.onlineEnabled !== false && location.protocol !== "file:",
   householdId: null,
   householdCode: "",
   status: "本地模式",
@@ -46,7 +51,8 @@ const online = {
   loading: false,
   applyingRemote: false,
   saveTimer: null,
-  subscription: null
+  pollTimer: null,
+  updatedAt: null
 };
 
 loadHouseholdSession();
@@ -239,11 +245,13 @@ let ui = {
   menuMode: "browse",
   menuCategory: "全部",
   menuSearch: "",
+  featuredDishIndex: 0,
   editingDishId: null,
   detailDishId: null
 };
 
 const app = document.querySelector("#app");
+let storageQuotaNoticeShown = false;
 
 function todayKey() {
   return dateKeyFromDate(new Date());
@@ -344,7 +352,6 @@ function normalizePlan(plan = {}) {
 
 function normalizeMealPhoto(photo = {}) {
   const image = String(photo.image || "").trim();
-  if (!image) return null;
   const targetKeys = Array.isArray(photo.targetKeys)
     ? photo.targetKeys.map(String).filter(Boolean)
     : Array.isArray(photo.dishIds)
@@ -353,23 +360,47 @@ function normalizeMealPhoto(photo = {}) {
   const analysis = normalizeMealAnalysis(photo.analysis);
   const analysisStatus = normalizePhotoStatus(photo.analysisStatus || (analysis ? "done" : "idle"));
   const shareImage = String(photo.shareImage || "").trim();
+  const imageOmitted = Boolean(photo.imageOmitted);
+  const shareOmitted = Boolean(photo.shareOmitted);
+  if (!image && !imageOmitted && !analysis && !shareImage && !shareOmitted) return null;
   return {
     id: photo.id || `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     image,
+    imageOmitted,
     targetKeys,
     createdAt: photo.createdAt || new Date().toISOString(),
     analysis,
     analysisStatus,
     analysisError: String(photo.analysisError || "").trim(),
+    analysisStartedAt: photo.analysisStartedAt || null,
     shareImage,
+    shareOmitted,
     shareStatus: normalizePhotoStatus(photo.shareStatus || (shareImage ? "done" : "idle")),
     shareError: String(photo.shareError || "").trim(),
+    shareStartedAt: photo.shareStartedAt || null,
     shareCreatedAt: photo.shareCreatedAt || null
   };
 }
 
 function normalizePhotoStatus(value) {
   return photoStatusValues.includes(value) ? value : "idle";
+}
+
+function isStalePhotoProcessing(photo, statusKey, startedAtKey) {
+  if (!photo || photo[statusKey] !== "loading") return false;
+  const startedAt = Date.parse(photo[startedAtKey] || photo.createdAt || "");
+  return Number.isFinite(startedAt) && Date.now() - startedAt > PHOTO_PROCESSING_STALE_MS;
+}
+
+function schedulePhotoProcessingFallback(dateKey, photoId, statusKey, startedAtKey, startedAtValue) {
+  const startedAt = Date.parse(startedAtValue || "");
+  if (!Number.isFinite(startedAt)) return;
+  const delay = Math.max(0, PHOTO_PROCESSING_STALE_MS - (Date.now() - startedAt) + 250);
+  window.setTimeout(() => {
+    const plan = state.plans[dateKey] ? normalizePlan(state.plans[dateKey]) : null;
+    const photo = planPhotos(plan).find((item) => item.id === photoId);
+    if (isStalePhotoProcessing(photo, statusKey, startedAtKey)) render();
+  }, delay);
 }
 
 function normalizeMealAnalysis(value) {
@@ -419,16 +450,24 @@ function normalizeWish(wish = {}) {
   if (!name) return null;
   const meal = mealOrder.includes(wish.meal) ? wish.meal : "dinner";
   const status = wishStatuses[wish.status] ? wish.status : "searching";
+  const createdAt = wish.createdAt || new Date().toISOString();
+  const searchStartedAt = wish.searchStartedAt || (status === "searching" ? createdAt : "");
+  const searchIsStale =
+    status === "searching" &&
+    searchStartedAt &&
+    Number.isFinite(Date.parse(searchStartedAt)) &&
+    Date.now() - Date.parse(searchStartedAt) > WISH_SEARCH_STALE_MS;
   return {
     id: wish.id || `wish-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     meal,
     name,
     note: String(wish.note || "").trim(),
-    status,
-    createdAt: wish.createdAt || new Date().toISOString(),
+    status: searchIsStale ? "failed" : status,
+    createdAt,
+    searchStartedAt: searchIsStale ? "" : searchStartedAt,
     recipe: wish.recipe && typeof wish.recipe === "object" ? wish.recipe : null,
     dishId: wish.dishId || "",
-    error: String(wish.error || "").trim()
+    error: searchIsStale ? "找菜超时了，可以点重新找，或者直接让老公挑战。" : String(wish.error || "").trim()
   };
 }
 
@@ -455,8 +494,234 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  persistLocalState(state);
   scheduleRemoteSave();
+}
+
+function persistLocalState(nextState, options = {}) {
+  const notify = options.notify !== false;
+  const candidates = [
+    { state: compactLocalState(nextState, { stripMealPhotoImages: true }), notice: "" },
+    {
+      state: compactLocalState(nextState, { stripMealPhotoImages: true, stripStepDataImages: true, removeDataImages: true }),
+      notice: "本地空间不足，已清理本地图片缓存并保存菜单"
+    },
+    {
+      state: compactLocalState(nextState, {
+        stripMealPhotoImages: true,
+        stripStepDataImages: true,
+        keepOnlyCurrentPhotos: true,
+        mealPhotoLimit: 4
+      }),
+      notice: "本地空间不足，已只保留最近的饭后照片"
+    },
+    {
+      state: compactLocalState(nextState, {
+        stripMealPhotoImages: true,
+        stripStepDataImages: true,
+        keepOnlyCurrentPhotos: true,
+        mealPhotoLimit: 1
+      }),
+      notice: "本地空间不足，已只保留最近 1 张饭后照片"
+    },
+    {
+      state: compactLocalState(nextState, { removeMealPhotos: true, stripStepDataImages: true }),
+      notice: "本地空间不足，已清理饭后照片缓存并保存菜单"
+    },
+    {
+      state: compactLocalState(nextState, { removeMealPhotos: true, stripStepDataImages: true, removeDataImages: true }),
+      notice: "本地空间不足，已清理本地图片缓存并保存菜单"
+    }
+  ];
+
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(candidate.state));
+      if (candidate.notice && notify) showStorageQuotaNotice(candidate.notice);
+      return nextState;
+    } catch (error) {
+      lastError = error;
+      if (!isQuotaExceededError(error)) break;
+    }
+  }
+
+  console.warn("本地保存失败", lastError);
+  if (notify) showStorageQuotaNotice("本地空间仍然不足，请删除旧照片或清理站点数据");
+  return nextState;
+}
+
+function compactLocalState(value, options = {}) {
+  const compacted = clonePlain(value);
+  const keepPhotoKeys = localPhotoKeepKeys();
+
+  for (const [dateKey, rawPlan] of Object.entries(compacted.plans || {})) {
+    const plan = rawPlan && typeof rawPlan === "object" ? rawPlan : emptyPlan();
+    let photos = Array.isArray(plan.afterPhotos) ? plan.afterPhotos : [];
+
+    if (options.keepOnlyCurrentPhotos && !keepPhotoKeys.has(dateKey)) {
+      photos = [];
+    }
+    if (options.removeMealPhotos) {
+      photos = [];
+    }
+    if (options.removeShareImages) {
+      photos = photos.map((photo) => ({
+        ...photo,
+        shareImage: "",
+        shareOmitted: Boolean(photo.shareImage || photo.shareOmitted),
+        shareStatus: photo.shareStatus === "done" ? "idle" : photo.shareStatus,
+        shareCreatedAt: null
+      }));
+    }
+    if (options.stripMealPhotoImages) {
+      photos = photos.map(stripMealPhotoImages);
+    }
+    if (Number.isFinite(options.mealPhotoLimit)) {
+      photos = photos
+        .map((photo, index) => ({ photo, index }))
+        .sort((a, b) => {
+          const dateA = Date.parse(a.photo.createdAt || "");
+          const dateB = Date.parse(b.photo.createdAt || "");
+          return (Number.isFinite(dateB) ? dateB : 0) - (Number.isFinite(dateA) ? dateA : 0) || a.index - b.index;
+        })
+        .slice(0, options.mealPhotoLimit)
+        .map(({ photo }) => photo);
+    }
+
+    compacted.plans[dateKey] = { ...plan, afterPhotos: photos };
+  }
+
+  const withoutStepDataImages = options.stripStepDataImages ? stripRemoteHeavyMedia(compacted) : compacted;
+  if (options.removeDataImages) return stripDataImages(withoutStepDataImages);
+  return withoutStepDataImages;
+}
+
+function stripMealPhotoImages(photo = {}) {
+  const hadImage = Boolean(photo.image || photo.imageOmitted);
+  const hadShareImage = Boolean(photo.shareImage || photo.shareOmitted);
+  return {
+    ...photo,
+    image: "",
+    imageOmitted: hadImage,
+    shareImage: "",
+    shareOmitted: hadShareImage,
+    shareStatus: photo.shareStatus === "done" ? "idle" : photo.shareStatus,
+    shareCreatedAt: photo.shareStatus === "done" ? null : photo.shareCreatedAt
+  };
+}
+
+function mergeRemoteStateWithLocalMedia(remoteState, localState) {
+  const merged = clonePlain(remoteState);
+  const localPlans = localState?.plans || {};
+
+  for (const [dateKey, plan] of Object.entries(merged.plans || {})) {
+    const localPhotos = new Map(
+      (localPlans[dateKey]?.afterPhotos || []).filter((photo) => photo?.id).map((photo) => [photo.id, photo])
+    );
+    if (!Array.isArray(plan?.afterPhotos)) continue;
+    plan.afterPhotos = plan.afterPhotos.map((photo) => {
+      const localPhoto = localPhotos.get(photo.id);
+      if (!localPhoto) return photo;
+      return {
+        ...photo,
+        image: photo.image || localPhoto.image || "",
+        imageOmitted: Boolean(photo.imageOmitted && !localPhoto.image),
+        shareImage: photo.shareImage || localPhoto.shareImage || "",
+        shareOmitted: Boolean(photo.shareOmitted && !localPhoto.shareImage),
+        shareStatus: photo.shareImage || localPhoto.shareImage ? localPhoto.shareStatus || photo.shareStatus : photo.shareStatus,
+        shareCreatedAt: photo.shareImage || localPhoto.shareImage ? localPhoto.shareCreatedAt || photo.shareCreatedAt : photo.shareCreatedAt
+      };
+    });
+  }
+
+  return merged;
+}
+
+function clonePlain(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return createDefaultState();
+  }
+}
+
+function localPhotoKeepKeys() {
+  const keys = new Set([todayKey()]);
+  if (ui?.dateKey) keys.add(ui.dateKey);
+  return keys;
+}
+
+function stripDataImages(value) {
+  if (Array.isArray(value)) return value.map(stripDataImages);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => {
+      if (["image", "imageUrl", "shareImage"].includes(key) && isDataImage(item)) return [key, ""];
+      return [key, stripDataImages(item)];
+    })
+  );
+}
+
+function compactRemoteState(value, options = {}) {
+  return stripRemoteHeavyMedia(compactLocalState(value, { stripMealPhotoImages: true }), {
+    stripAllDataImages: true,
+    ...options
+  });
+}
+
+function stripRemoteHeavyMedia(value, options = {}, key = "") {
+  if (Array.isArray(value)) {
+    if (key === "steps" || key === "stepDetails") return value.map((item) => stripStepMedia(item));
+    return value.map((item) => stripRemoteHeavyMedia(item, options));
+  }
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value).map(([itemKey, item]) => {
+      if (itemKey === "steps" || itemKey === "stepDetails") {
+        return [itemKey, Array.isArray(item) ? item.map((step) => stripStepMedia(step)) : item];
+      }
+      if (itemKey === "shareImage" && isDataImage(item)) return [itemKey, ""];
+      if (itemKey === "imageUrl" && isDataImage(item)) return [itemKey, ""];
+      if (itemKey === "image" && isDataImage(item)) {
+        if (options.stripAllDataImages || String(item).length > 750_000) {
+          return [itemKey, value.imageUrl && !isDataImage(value.imageUrl) ? value.imageUrl : ""];
+        }
+      }
+      return [itemKey, stripRemoteHeavyMedia(item, options, itemKey)];
+    })
+  );
+}
+
+function stripStepMedia(step) {
+  if (!step || typeof step !== "object") return step;
+  return {
+    ...step,
+    image: isDataImage(step.image) ? "" : step.image || "",
+    imageUrl: isDataImage(step.imageUrl) ? "" : step.imageUrl || ""
+  };
+}
+
+function isDataImage(value) {
+  return typeof value === "string" && value.startsWith("data:image/");
+}
+
+function isQuotaExceededError(error) {
+  return (
+    error?.name === "QuotaExceededError" ||
+    error?.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    error?.code === 22 ||
+    error?.code === 1014 ||
+    /quota|exceeded/i.test(error?.message || "")
+  );
+}
+
+function showStorageQuotaNotice(message) {
+  if (storageQuotaNoticeShown) return;
+  storageQuotaNoticeShown = true;
+  toast(message);
 }
 
 function normalizeAppState(value = {}) {
@@ -510,25 +775,15 @@ function saveHouseholdSession() {
   );
 }
 
-async function getSupabaseClient() {
-  if (!online.enabled) throw new Error("Supabase 尚未配置");
-  if (online.client) return online.client;
-  const { createClient } = await import(SUPABASE_CDN);
-  online.client = createClient(SUPABASE_CONFIG.supabaseUrl, SUPABASE_CONFIG.supabaseAnonKey);
-  return online.client;
-}
-
-async function ensureOnlineUser() {
-  const client = await getSupabaseClient();
-  const { data: sessionData } = await client.auth.getSession();
-  if (sessionData.session?.user) {
-    online.user = sessionData.session.user;
-    return online.user;
-  }
-  const { data, error } = await client.auth.signInAnonymously();
-  if (error) throw error;
-  online.user = data.user;
-  return online.user;
+async function requestDomesticApi(path, body) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `请求失败：${response.status}`);
+  return payload;
 }
 
 async function joinHousehold(householdCode) {
@@ -540,23 +795,17 @@ async function joinHousehold(householdCode) {
 
   online.loading = true;
   online.error = "";
-  online.status = "正在连接 Supabase...";
+  online.status = "正在连接国内服务...";
   render();
 
   try {
-    await ensureOnlineUser();
-    const client = await getSupabaseClient();
-    const { data: householdId, error } = await client.rpc("join_household_by_code", {
-      p_code: code
-    });
-    if (error) throw error;
-
-    online.householdId = householdId;
+    const result = await requestDomesticApi("/api/miniprogram-state", { code });
+    online.householdId = result.householdId;
     online.householdCode = code;
     online.status = `在线同步：${code}`;
     saveHouseholdSession();
-    await loadRemoteState({ seedIfEmpty: true });
-    subscribeRemoteState();
+    await applyRemoteResult(result, { seedIfEmpty: true });
+    startRemotePolling();
     toast("已进入家庭菜单");
   } catch (error) {
     online.error = error.message || "连接失败";
@@ -569,23 +818,28 @@ async function joinHousehold(householdCode) {
 
 async function loadRemoteState({ seedIfEmpty = false } = {}) {
   if (!online.enabled || !online.householdId) return;
-  const client = await getSupabaseClient();
-  const { data, error } = await client
-    .from("household_states")
-    .select("payload")
-    .eq("household_id", online.householdId)
-    .maybeSingle();
-  if (error) throw error;
+  const result = await requestDomesticApi("/api/miniprogram-state", { code: online.householdCode });
+  await applyRemoteResult(result, { seedIfEmpty });
+}
 
-  if (data?.payload && Object.keys(data.payload).length) {
+async function applyRemoteResult(result, { seedIfEmpty = false } = {}) {
+  if (result.payload && Object.keys(result.payload).length) {
+    if (result.updatedAt && result.updatedAt === online.updatedAt) return;
     online.applyingRemote = true;
-    state = normalizeAppState(data.payload);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    state = normalizeAppState(mergeRemoteStateWithLocalMedia(result.payload, state));
+    persistLocalState(state);
     online.applyingRemote = false;
+    online.updatedAt = result.updatedAt || online.updatedAt;
     return;
   }
 
-  if (seedIfEmpty) await saveRemoteStateNow();
+  if (seedIfEmpty) {
+    online.applyingRemote = true;
+    state = createDefaultState();
+    persistLocalState(state);
+    online.applyingRemote = false;
+    await saveRemoteStateNow();
+  }
 }
 
 function scheduleRemoteSave() {
@@ -602,44 +856,24 @@ function scheduleRemoteSave() {
 
 async function saveRemoteStateNow() {
   if (!online.enabled || !online.householdId || online.applyingRemote) return;
-  const client = await getSupabaseClient();
-  const { error } = await client.from("household_states").upsert({
-    household_id: online.householdId,
-    payload: state,
-    updated_at: new Date().toISOString()
+  const result = await requestDomesticApi("/api/miniprogram-state", {
+    code: online.householdCode,
+    payload: compactRemoteState(state)
   });
-  if (error) throw error;
+  online.updatedAt = result.updatedAt || online.updatedAt;
   online.status = `在线同步：${online.householdCode}`;
 }
 
-function subscribeRemoteState() {
-  if (!online.enabled || !online.householdId || online.subscription) return;
-  getSupabaseClient()
-    .then((client) => {
-      online.subscription = client
-        .channel(`household-state-${online.householdId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "UPDATE",
-            schema: "public",
-            table: "household_states",
-            filter: `household_id=eq.${online.householdId}`
-          },
-          (payload) => {
-            if (!payload.new?.payload) return;
-            online.applyingRemote = true;
-            state = normalizeAppState(payload.new.payload);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-            online.applyingRemote = false;
-            render();
-          }
-        )
-        .subscribe();
-    })
-    .catch((error) => {
-      online.error = error.message || "实时同步失败";
+function startRemotePolling() {
+  if (!online.enabled || !online.householdId || online.pollTimer) return;
+  online.pollTimer = setInterval(() => {
+    if (document.hidden || online.loading || online.applyingRemote) return;
+    loadRemoteState().then(render).catch((error) => {
+      online.error = error.message || "同步失败";
+      online.status = "同步失败";
+      render();
     });
+  }, REMOTE_POLL_INTERVAL_MS);
 }
 
 async function leaveHousehold() {
@@ -647,11 +881,9 @@ async function leaveHousehold() {
   online.householdCode = "";
   online.status = online.enabled ? "未加入家庭" : "本地模式";
   online.error = "";
-  if (online.subscription) {
-    const client = await getSupabaseClient();
-    client.removeChannel(online.subscription);
-  }
-  online.subscription = null;
+  online.updatedAt = null;
+  clearInterval(online.pollTimer);
+  online.pollTimer = null;
   saveHouseholdSession();
   render();
 }
@@ -930,7 +1162,7 @@ function planFoodTargets(plan) {
         type: "wish",
         meal,
         name: wish.name,
-        image: wish.recipe?.image || fallbackDishImage({ name: wish.name, category: "许愿菜" })
+        image: wish.recipe?.image || wish.recipe?.imageUrl || fallbackDishImage({ name: wish.name, category: "许愿菜" })
       });
     }
   }
@@ -993,7 +1225,7 @@ function dishSteps(dish) {
 }
 
 function stepImageSrc(step) {
-  return step.image || "";
+  return displayImageSrc(step.image || step.imageUrl || "");
 }
 
 function stepImageCount(steps) {
@@ -1003,6 +1235,29 @@ function stepImageCount(steps) {
 function renderStepTextList(steps, limit = 5, emptyText = "打开下厨房查看完整步骤。") {
   const lines = steps.map((step) => step.text).filter(Boolean).slice(0, limit);
   return `<ol>${lines.length ? lines.map((step) => `<li>${escapeHtml(step)}</li>`).join("") : `<li>${escapeHtml(emptyText)}</li>`}</ol>`;
+}
+
+function renderStepPreviewList(steps, limit = 5, emptyText = "打开下厨房查看完整步骤。") {
+  const items = steps.filter((step) => step.text || stepImageSrc(step)).slice(0, limit);
+  return `
+    <ol class="step-text-list">
+      ${
+        items.length
+          ? items
+              .map((step) => {
+                const image = stepImageSrc(step);
+                return `
+                  <li>
+                    ${image ? `<img class="step-inline-image" src="${escapeAttr(image)}" alt="" loading="lazy" />` : ""}
+                    ${step.text ? `<span>${escapeHtml(step.text)}</span>` : ""}
+                  </li>
+                `;
+              })
+              .join("")
+          : `<li><span>${escapeHtml(emptyText)}</span></li>`
+      }
+    </ol>
+  `;
 }
 
 function renderStepTimeline(steps) {
@@ -1052,27 +1307,62 @@ function dishImageSrc(dish) {
   if (dish?.id === "tomato-eggs" && String(dish.image || "").includes("photo-1589927986089")) {
     return fallbackDishImage(dish);
   }
-  return dish?.image || fallbackDishImage(dish);
+  return displayImageSrc(dish?.image || "") || fallbackDishImage(dish);
+}
+
+function displayImageSrc(value) {
+  const src = String(value || "").trim();
+  if (!src || src.startsWith("data:image/") || src.startsWith("blob:")) return src;
+  return shouldProxyImage(src) ? `/api/proxy-image?url=${encodeURIComponent(src)}` : src;
+}
+
+function shouldProxyImage(value) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return ["chuimg.com", "xiachufang.com", "sinaimg.cn", "sina.com.cn"].some(
+      (host) => hostname === host || hostname.endsWith(`.${host}`)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function fallbackDishImage(dish = {}) {
   const name = dish.name || "家常菜";
   const category = dish.category || "菜单";
+  const foodColors = /番茄|番茄炒蛋|西红柿/.test(name)
+    ? ["#e95f43", "#f4ce55", "#76a96f", "#f7e2a1"]
+    : category === "肉菜"
+      ? ["#b85e43", "#e2a36c", "#6f8b63", "#f2d8b1"]
+      : category === "蔬菜"
+        ? ["#7fbe72", "#bfdc85", "#5d9d70", "#e7f1d0"]
+        : category === "汤粥"
+          ? ["#e5c672", "#f1dfaa", "#b98b56", "#fff4d2"]
+          : ["#e9a0ad", "#b9cfe9", "#d9c184", "#f5eddb"];
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560">
       <defs>
         <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0" stop-color="#fff7ed"/>
-          <stop offset="0.54" stop-color="#f0f6e8"/>
-          <stop offset="1" stop-color="#dcebd2"/>
+          <stop offset="0" stop-color="#f5efe1"/>
+          <stop offset="0.55" stop-color="#dfeade"/>
+          <stop offset="1" stop-color="#efd4d5"/>
         </linearGradient>
+        <radialGradient id="plate" cx="50%" cy="42%" r="58%">
+          <stop offset="0" stop-color="#ffffff"/>
+          <stop offset="0.68" stop-color="#f4f0e8"/>
+          <stop offset="1" stop-color="#cfc8bc"/>
+        </radialGradient>
       </defs>
       <rect width="900" height="560" fill="url(#bg)"/>
-      <circle cx="735" cy="96" r="138" fill="#e14a2e" opacity="0.13"/>
-      <circle cx="146" cy="458" r="118" fill="#287f64" opacity="0.12"/>
-      <rect x="72" y="72" width="756" height="416" rx="36" fill="rgba(255,255,255,0.58)" stroke="#c8d8bd" stroke-width="4"/>
-      <text x="450" y="258" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, sans-serif" font-size="62" font-weight="800" fill="#1f251f">${escapeSvg(name)}</text>
-      <text x="450" y="332" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, sans-serif" font-size="30" font-weight="700" fill="#65705f">${escapeSvg(category)}</text>
+      <circle cx="450" cy="280" r="214" fill="#0c0d0c" opacity="0.92"/>
+      <circle cx="450" cy="280" r="182" fill="url(#plate)" opacity="0.98"/>
+      <ellipse cx="398" cy="235" rx="86" ry="58" fill="${foodColors[0]}" opacity="0.86"/>
+      <ellipse cx="500" cy="238" rx="92" ry="62" fill="${foodColors[1]}" opacity="0.9"/>
+      <ellipse cx="450" cy="326" rx="102" ry="70" fill="${foodColors[2]}" opacity="0.86"/>
+      <circle cx="388" cy="300" r="38" fill="${foodColors[3]}" opacity="0.9"/>
+      <circle cx="544" cy="304" r="34" fill="${foodColors[0]}" opacity="0.72"/>
+      <path d="M360 214 C436 174 526 184 586 238" fill="none" stroke="#ffffff" stroke-opacity="0.34" stroke-width="18"/>
+      <text x="450" y="508" text-anchor="middle" font-family="Avenir Next, Hiragino Sans GB, PingFang SC, sans-serif" font-size="28" font-weight="780" fill="#6f756c">${escapeSvg(category)}</text>
     </svg>
   `;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
@@ -1094,15 +1384,16 @@ function markPlanDraft(plan) {
 }
 
 function render() {
-  const plan = ensureTodayPlan();
+  const requiresHousehold = online.enabled && !online.householdId;
+  const plan = requiresHousehold ? normalizePlan(emptyPlan()) : ensureTodayPlan();
   const isWife = ui.view === "wife";
   document.title = isWife ? "老婆点菜" : "老公厨房";
   app.innerHTML = `
     <div class="app-shell">
       ${renderHeader(plan)}
-      ${renderDateStrip()}
+      ${requiresHousehold ? "" : renderDateStrip(plan)}
       ${renderOnlineBar()}
-      ${online.enabled && !online.householdId ? renderHouseholdGate() : isWife ? renderWifeView(plan) : renderHusbandView(plan)}
+      ${requiresHousehold ? renderHouseholdGate() : isWife ? renderWifeView(plan) : renderHusbandView(plan)}
       ${renderMenuDrawer()}
       ${renderDetailModal()}
     </div>
@@ -1116,7 +1407,8 @@ function renderHeader(plan) {
       <div class="brand">
         <div class="brand-mark">${isWife ? "点" : "厨"}</div>
         <div>
-          <h1>${isWife ? "老婆点菜" : "老公厨房"}</h1>
+          <span class="brand-eyebrow">${isWife ? "Private Kitchen Brief" : "Chef Console"}</span>
+          <h1>${isWife ? "老婆点菜台" : "老公厨房台"}</h1>
           <p class="subtle">${dayLabel()} · ${dateModeText()}，${isWife ? wifeDateHint() : orderStatusText(plan)}</p>
         </div>
       </div>
@@ -1132,12 +1424,15 @@ function renderHeader(plan) {
   `;
 }
 
-function renderDateStrip() {
+function renderDateStrip(plan) {
+  const pending = unresolvedMeals(plan).length;
+  const total = selectedDishCount(plan) + wishCount(plan);
   return `
     <section class="date-strip">
       <div>
+        <span class="stage-eyebrow">${ui.view === "wife" ? "Pick Session" : "Kitchen Brief"}</span>
         <strong>${dayLabel()}</strong>
-        <span>${dateModeText()}</span>
+        <span>${dateModeText()} · ${total} 项已选 · ${pending ? `${pending} 餐待定` : "三餐已决定"}</span>
       </div>
       ${renderDateControls()}
     </section>
@@ -1162,12 +1457,13 @@ function renderDateControls() {
 }
 
 function renderOnlineBar() {
+  if (!online.enabled) return "";
   const mode = online.enabled ? (online.householdId ? "online" : "setup") : "local";
   return `
     <section class="sync-strip ${mode}">
       <div>
         <strong>${online.enabled ? (online.householdId ? "在线家庭菜单" : "等待家庭码") : "本地预览模式"}</strong>
-        <span>${online.enabled ? online.status : "配置 Supabase 后可以跨设备同步。"}</span>
+        <span>${online.enabled ? online.status : "部署国内服务后可以跨设备同步。"}</span>
         ${online.error ? `<span class="sync-error">${escapeHtml(online.error)}</span>` : ""}
       </div>
       ${online.householdId ? `<button class="button" data-action="leave-household">切换家庭</button>` : ""}
@@ -1207,31 +1503,46 @@ function renderWifeView(plan) {
   const readOnly = isPastDate();
   const activeMealCount = mealItemCount(plan, ui.meal);
   return `
-    <main class="workspace">
+    <main class="workspace wife-workspace">
       <section class="main-column">
-        <div class="control-strip">
-          <div class="meal-tabs" aria-label="选择餐次">
-            ${mealOrder.map((meal) => renderMealTab(plan, meal)).join("")}
-          </div>
-          <div class="decision-row">
-            <div>
-              <strong>${mealLabels[ui.meal]}</strong>
-              <span>${readOnly ? "历史查看模式" : skipped ? "这餐不需要做饭" : activeMealCount ? `已安排 ${activeMealCount} 项` : "还没决定吃什么"}</span>
+        <div class="control-strip pick-bar">
+          <div class="meal-picker-row">
+            <div class="meal-tabs" aria-label="选择餐次">
+              ${mealOrder.map((meal) => renderMealTab(plan, meal)).join("")}
             </div>
             ${
               readOnly
                 ? `<span class="date-status">只读历史</span>`
-                : `<button class="button ${skipped ? "green" : "ghost"}" data-action="toggle-skip" data-meal="${ui.meal}">
+                : `<button class="skip-meal-button ${skipped ? "active" : ""}" data-action="toggle-skip" data-meal="${ui.meal}" aria-pressed="${skipped ? "true" : "false"}">
                     ${skipped ? "恢复点餐" : `跳过${mealLabels[ui.meal]}`}
                   </button>`
             }
           </div>
+          <div class="decision-row meal-status-row">
+            <div>
+              <strong>${mealLabels[ui.meal]}</strong>
+              <span>${readOnly ? "历史查看模式" : skipped ? "这餐不需要做饭" : activeMealCount ? `已安排 ${activeMealCount} 项` : "还没决定吃什么"}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="dish-grid">
           ${
             readOnly
-              ? `<div class="empty-state">这是过去的点餐记录，只能查看，不能修改。</div>`
+              ? renderHistoryMeal(plan, ui.meal)
               : skipped
-              ? `<div class="empty-state">已跳过${mealLabels[ui.meal]}，这餐不会出现在采购清单里。</div>`
-              : `
+                ? `<div class="empty-state">已跳过${mealLabels[ui.meal]}，这餐不会出现在采购清单里。</div>`
+                : filtered.length
+                  ? renderDishCarousel(filtered, plan)
+                  : renderNoDish()
+          }
+        </div>
+
+        ${
+          readOnly || skipped
+            ? ""
+            : `
+              <div class="control-strip filter-drawer">
                 <div class="search-row">
                   <input class="search" type="search" value="${escapeAttr(ui.search)}" placeholder="搜菜名、食材或口味" aria-label="搜索菜单" data-role="search" />
                   <button class="button primary" data-action="random">随便安排一道</button>
@@ -1248,21 +1559,9 @@ function renderWifeView(plan) {
                     .join("")}
                 </div>
                 ${renderWishForm()}
-              `
-          }
-        </div>
-
-        <div class="dish-grid">
-          ${
-            readOnly
-              ? renderHistoryMeal(plan, ui.meal)
-              : skipped
-                ? ""
-                : filtered.length
-                  ? filtered.map((dish) => renderWifeDishCard(dish, plan)).join("")
-                  : renderNoDish()
-          }
-        </div>
+              </div>
+            `
+        }
       </section>
 
       <aside class="side-column">
@@ -1289,8 +1588,8 @@ function renderWishForm() {
   return `
     <form class="wish-form" data-role="wish-form">
       <div class="wish-copy">
-        <strong>菜单里没有？点一道许愿菜</strong>
-        <span>输入菜名，系统会给老公找下厨房参考。</span>
+        <strong>菜单外想吃的菜</strong>
+        <span>输入菜名，自动给厨房找参考。</span>
       </div>
       <div class="wish-input-row">
         <input name="wishName" required maxlength="24" autocomplete="off" placeholder="比如：糖醋里脊" />
@@ -1299,6 +1598,89 @@ function renderWishForm() {
       <textarea name="wishNote" maxlength="80" placeholder="口味备注，可不填，比如少油、酸甜口"></textarea>
     </form>
   `;
+}
+
+function renderDishCarousel(dishes, plan) {
+  const activeIndex = normalizeFeaturedDishIndex(dishes.length);
+  const dish = dishes[activeIndex];
+  const isOrdered = plan[ui.meal].includes(dish.id);
+  const ingredients = dish.ingredients.map((item) => item.name).slice(0, 8).join("、");
+  return `
+    <section class="dish-carousel" data-role="dish-carousel" ${dishCarouselStyle(dish)}>
+      <div class="carousel-glass">
+        <div class="dish-copy">
+          <span class="carousel-eyebrow">${escapeHtml(dish.category)} · ${escapeHtml(dish.difficulty)}</span>
+          <h2>${escapeHtml(dish.name)}</h2>
+          <p>${escapeHtml(dish.note || `${ingredients}，${dish.time} 分钟左右。`)}</p>
+          <div class="meta-row">
+            <span class="meta">${dish.time} 分钟</span>
+            <span class="meta">${dishBadgeText(dish)}</span>
+            <span class="meta">${escapeHtml(ingredients)}</span>
+          </div>
+          <div class="carousel-actions">
+            ${
+              isOrdered
+                ? `<button class="button green" disabled>已加入${mealLabels[ui.meal]}</button>`
+                : `<button class="button primary" data-action="add-dish" data-dish="${dish.id}">加入${mealLabels[ui.meal]}</button>`
+            }
+            <button class="button ghost" data-action="view-detail" data-dish="${dish.id}">查看菜谱</button>
+          </div>
+        </div>
+
+        <div class="dish-showpiece" aria-hidden="true">
+          <div class="plate-orbit">
+            <img src="${escapeAttr(dishImageSrc(dish))}" alt="" />
+          </div>
+        </div>
+
+        <div class="carousel-rail" aria-label="切换菜品">
+          <button class="carousel-arrow prev" data-action="shift-featured-dish" data-shift="-1" aria-label="上一道菜">‹</button>
+          <div class="dish-thumbs">
+            ${dishes.map((item, index) => renderDishThumb(item, index, activeIndex)).join("")}
+          </div>
+          <button class="carousel-arrow next" data-action="shift-featured-dish" data-shift="1" aria-label="下一道菜">›</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderDishThumb(dish, index, activeIndex) {
+  const offset = index - activeIndex;
+  const arc = Math.max(-2, Math.min(2, offset));
+  const arcY = index === activeIndex ? -22 : Math.abs(arc) === 1 ? -10 : 2;
+  return `
+    <button
+      class="dish-thumb ${index === activeIndex ? "active" : ""}"
+      style="--arc:${arc};--arc-y:${arcY}px"
+      data-action="set-featured-dish"
+      data-index="${index}"
+      aria-label="切换到 ${escapeAttr(dish.name)}"
+    >
+      <img src="${escapeAttr(dishImageSrc(dish))}" alt="" loading="lazy" />
+      <span>${escapeHtml(dish.name)}</span>
+    </button>
+  `;
+}
+
+function normalizeFeaturedDishIndex(length) {
+  if (!length) return 0;
+  ui.featuredDishIndex = ((ui.featuredDishIndex % length) + length) % length;
+  return ui.featuredDishIndex;
+}
+
+function dishCarouselStyle(dish) {
+  const palette = dishPalette(dish.category);
+  return `style="--dish-image:url('${escapeAttr(dishImageSrc(dish))}');--dish-accent:${palette.accent};--dish-wash:${palette.wash};--dish-ink:${palette.ink};"`;
+}
+
+function dishPalette(category = "") {
+  if (category === "肉菜") return { accent: "#e9a36d", wash: "rgba(239, 181, 126, 0.52)", ink: "#1f120c" };
+  if (category === "蔬菜") return { accent: "#acd89a", wash: "rgba(181, 222, 167, 0.52)", ink: "#102012" };
+  if (category === "汤粥") return { accent: "#e2c982", wash: "rgba(232, 212, 147, 0.52)", ink: "#211b0c" };
+  if (category === "早餐") return { accent: "#f0b8c4", wash: "rgba(243, 190, 202, 0.52)", ink: "#261118" };
+  if (category === "主食") return { accent: "#b9cce9", wash: "rgba(188, 205, 231, 0.52)", ink: "#101923" };
+  return { accent: "#d9c6a5", wash: "rgba(224, 207, 176, 0.52)", ink: "#1b1710" };
 }
 
 function renderWifeDishCard(dish, plan) {
@@ -1318,15 +1700,14 @@ function renderWifeDishCard(dish, plan) {
         <div class="meta-row">
           <span class="meta">${dish.time} 分钟</span>
           <span class="meta">${escapeHtml(dish.difficulty)}</span>
-          <span class="meta">${dish.meals.map((meal) => mealLabels[meal]).join("/")}</span>
         </div>
         <p class="ingredients-line">${escapeHtml(ingredients)}</p>
         <div class="dish-actions">
-          <button class="button" data-action="view-detail" data-dish="${dish.id}">详情</button>
+          <button class="button" data-action="view-detail" data-dish="${dish.id}">菜谱</button>
           ${
             isOrdered
               ? `<button class="button green" disabled>已选</button>`
-              : `<button class="button green" data-action="add-dish" data-dish="${dish.id}">加入${mealLabels[ui.meal]}</button>`
+              : `<button class="button green" data-action="add-dish" data-dish="${dish.id}">加入</button>`
           }
         </div>
       </div>
@@ -1434,8 +1815,8 @@ function renderAfterMealPhotoPanel(plan) {
     <section class="panel after-meal-panel" data-role="after-meal-panel">
       <div class="panel-header">
         <div>
-          <h2>AI 热量线程</h2>
-          <p>${photos.length ? `${photos.length} 张照片，${analyzedCount} 张已估算` : canUpload ? "拍一张整桌照，自动识别大致热量。" : "还没有上传照片。"}</p>
+          <h2>AI 热量分享</h2>
+          <p>${photos.length ? `${photos.length} 张照片，${analyzedCount} 张已完成` : canUpload ? "拍一张整桌照，自动估算热量并生成分享图。" : "还没有上传照片。"}</p>
         </div>
         <span class="photo-count">${photos.length}</span>
       </div>
@@ -1460,7 +1841,7 @@ function renderAfterMealPhotoPanel(plan) {
                 <label class="photo-upload-card">
                   <input type="file" accept="image/*" capture="environment" data-role="meal-photo-upload" />
                   <strong>上传整桌照</strong>
-                  <span>自动圈出菜品并估算 kcal</span>
+                  <span>自动估算 kcal 并生成分享图</span>
                 </label>
               </div>
             `
@@ -1481,11 +1862,15 @@ function renderAfterMealPhotoPanel(plan) {
 function renderMealPhotoCard(photo, targets, canRemove = false) {
   const targetKeys = photo.targetKeys || [];
   const shownTargets = targetKeys.length ? targetKeys : targets.map((target) => target.key);
+  const hasDisplayImage = Boolean(photo.shareImage || photo.image);
+  const displayImage = photo.shareImage || photo.image || fallbackMealPhotoImage(photo);
+  const isSharePreview = Boolean(photo.shareImage);
+  const showAnalysisOverlay = !photo.shareImage && photo.shareStatus !== "loading";
   return `
     <article class="meal-photo-card calorie-thread-card">
-      <div class="meal-photo-frame">
-        <img src="${escapeAttr(photo.image)}" alt="${escapeAttr(photoTargetLabel(photo, targets))}" loading="lazy" />
-        ${renderCalorieOverlay(photo)}
+      <div class="meal-photo-frame ${isSharePreview ? "share-preview-frame" : ""} ${hasDisplayImage ? "" : "photo-placeholder-frame"}">
+        <img src="${escapeAttr(displayImage)}" alt="${escapeAttr(photoTargetLabel(photo, targets))}" loading="lazy" />
+        ${showAnalysisOverlay ? renderCalorieOverlay(photo) : ""}
       </div>
       <div class="meal-photo-meta">
         <div>
@@ -1504,9 +1889,15 @@ function renderMealPhotoCard(photo, targets, canRemove = false) {
           .map((key) => `<span>${escapeHtml(photoTargetName(key, targets))}</span>`)
           .join("")}
       </div>
+      ${hasDisplayImage ? "" : `<div class="photo-cache-note">原图没有写入本地存储，重新上传可再次生成分享图。</div>`}
       ${renderPhotoAnalysis(photo)}
     </article>
   `;
+}
+
+function fallbackMealPhotoImage(photo = {}) {
+  const label = photo.analysis?.title || "整桌合照";
+  return fallbackDishImage({ name: label, category: "热量分享" });
 }
 
 function renderCalorieOverlay(photo) {
@@ -1538,11 +1929,29 @@ function renderCalorieOverlay(photo) {
 }
 
 function renderPhotoAnalysis(photo) {
+  if (!photo.image && !photo.analysis) {
+    return `
+      <div class="photo-analysis failed">
+        <strong>照片缓存已释放</strong>
+        <p>为了避免占满浏览器存储，原图没有保存在本地。请重新上传整桌照后再估算。</p>
+      </div>
+    `;
+  }
+
   if (photo.analysisStatus === "loading") {
+    if (isStalePhotoProcessing(photo, "analysisStatus", "analysisStartedAt")) {
+      return `
+        <div class="photo-analysis failed">
+          <strong>识别没有返回结果</strong>
+          <p>这次请求可能超时了，可以重新发起。会自动完成热量估算和分享图，不需要再点第二次。</p>
+          <button class="button wide" data-action="generate-meal-share" data-photo="${escapeAttr(photo.id)}">重新估算并生成</button>
+        </div>
+      `;
+    }
     return `
       <div class="photo-analysis loading">
-        <div class="calorie-status-line"><span class="spinner"></span><strong>正在识别菜品和热量</strong></div>
-        <p>会按每盘可见份量粗估，完成后自动显示圈线和 kcal。</p>
+        <div class="calorie-status-line"><span class="spinner"></span><strong>${photo.shareStatus === "loading" ? "正在估算热量并生成分享图" : "正在识别菜品和热量"}</strong></div>
+        <p>${photo.shareStatus === "loading" ? "会一次性完成热量标注和手绘分享图，不需要再点第二次。" : "会按每盘可见份量粗估，完成后自动显示圈线和 kcal。"}</p>
       </div>
     `;
   }
@@ -1552,7 +1961,7 @@ function renderPhotoAnalysis(photo) {
       <div class="photo-analysis failed">
         <strong>热量估算失败</strong>
         <p>${escapeHtml(photo.analysisError || "暂时没有识别成功，可以重新试一次。")}</p>
-        <button class="button wide" data-action="analyze-meal-photo" data-photo="${escapeAttr(photo.id)}">重新估算</button>
+        <button class="button wide" data-action="generate-meal-share" data-photo="${escapeAttr(photo.id)}">重新估算并生成</button>
       </div>
     `;
   }
@@ -1593,19 +2002,29 @@ function renderPhotoAnalysis(photo) {
           .join("")}
       </ul>
       <p class="calorie-note">${escapeHtml(analysis.notes)}</p>
-      <div class="calorie-actions">
-        <button class="button" data-action="analyze-meal-photo" data-photo="${escapeAttr(photo.id)}" ${photo.analysisStatus === "loading" ? "disabled" : ""}>重新估算</button>
-        <button class="button primary" data-action="generate-meal-share" data-photo="${escapeAttr(photo.id)}" ${photo.shareStatus === "loading" ? "disabled" : ""}>
-          ${photo.shareStatus === "loading" ? "生成中" : photo.shareImage ? "重生成分享图" : "生成手绘图"}
-        </button>
-      </div>
       ${renderShareImageBlock(photo)}
     </div>
   `;
 }
 
 function renderShareImageBlock(photo) {
+  if (!photo.image && !photo.shareImage) {
+    return `
+      <div class="share-image-block failed">
+        <span>原图没有保存在本地，重新上传后可生成分享图。</span>
+      </div>
+    `;
+  }
+
   if (photo.shareStatus === "loading") {
+    if (isStalePhotoProcessing(photo, "shareStatus", "shareStartedAt")) {
+      return `
+        <div class="share-image-block failed">
+          <span>分享图生成没有返回结果，可以重新发起。</span>
+          <button class="button wide" data-action="generate-meal-share" data-photo="${escapeAttr(photo.id)}">重新估算并生成</button>
+        </div>
+      `;
+    }
     return `
       <div class="share-image-block loading">
         <div class="calorie-status-line"><span class="spinner"></span><strong>正在生成手绘分享图</strong></div>
@@ -1613,12 +2032,16 @@ function renderShareImageBlock(photo) {
     `;
   }
   if (photo.shareStatus === "failed") {
-    return `<div class="share-image-block failed">${escapeHtml(photo.shareError || "分享图生成失败")}</div>`;
+    return `
+      <div class="share-image-block failed">
+        <span>${escapeHtml(photo.shareError || "分享图生成失败")}</span>
+        <button class="button wide" data-action="generate-meal-share" data-photo="${escapeAttr(photo.id)}">重新估算并生成</button>
+      </div>
+    `;
   }
   if (!photo.shareImage) return "";
   return `
     <div class="share-image-block">
-      <img src="${escapeAttr(photo.shareImage)}" alt="手绘风热量分享图" loading="lazy" />
       <a class="button wide" href="${escapeAttr(photo.shareImage)}" download="meal-calorie-note.jpg">下载分享图</a>
     </div>
   `;
@@ -1821,7 +2244,7 @@ function renderWishCookCard(wish) {
   const previewDish = {
     name: recipe.name || wish.name,
     category: "许愿菜",
-    image: recipe.image || ""
+    image: recipe.image || recipe.imageUrl || ""
   };
   const sourceUrl = recipe.sourceUrl || "";
   const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
@@ -2164,6 +2587,9 @@ function renderRecipeForm(editingDish = null) {
               : ""
           }
         </div>
+        <div class="import-step-preview" data-role="import-step-preview" ${existingSteps.some((step) => stepImageSrc(step)) ? "" : "hidden"}>
+          ${renderImportStepPreview(existingSteps)}
+        </div>
       </div>
       <div class="form-field">
         <label for="dish-image">封面图</label>
@@ -2309,13 +2735,17 @@ async function searchWishRecipe(dateKey, wishId) {
   if (!current) return;
   current.wish.status = "searching";
   current.wish.error = "";
+  current.wish.searchStartedAt = new Date().toISOString();
   saveState();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), WISH_SEARCH_TIMEOUT_MS);
 
   try {
     const response = await fetch("/api/search-recipe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: current.wish.name })
+      body: JSON.stringify({ query: current.wish.name }),
+      signal: controller.signal
     });
     const payload = await response.json().catch(() => ({}));
     const latest = findWishLocation(wishId, dateKey);
@@ -2325,15 +2755,20 @@ async function searchWishRecipe(dateKey, wishId) {
     latest.wish.status = "found";
     latest.wish.recipe = payload.recipe || null;
     latest.wish.error = "";
+    latest.wish.searchStartedAt = "";
     saveState();
     render();
   } catch (error) {
     const latest = findWishLocation(wishId, dateKey);
     if (!latest) return;
     latest.wish.status = "failed";
-    latest.wish.error = error.message || "没找到参考菜谱";
+    latest.wish.error =
+      error.name === "AbortError" ? "找菜超时了，可以点重新找，或者直接让老公挑战。" : error.message || "没找到参考菜谱";
+    latest.wish.searchStartedAt = "";
     saveState();
     render();
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -2356,6 +2791,7 @@ function refreshWish(wishId) {
   found.wish.status = "searching";
   found.wish.recipe = null;
   found.wish.error = "";
+  found.wish.searchStartedAt = new Date().toISOString();
   saveState();
   render();
   searchWishRecipe(found.dateKey, wishId);
@@ -2407,7 +2843,7 @@ function createDishFromWish(wish) {
     time: Math.max(5, Number(recipe.time) || 30),
     difficulty: "挑战菜",
     rating: 4,
-    image: recipe.image || "",
+    image: recipe.image || recipe.imageUrl || "",
     ingredients: parseIngredients(ingredientLines.join("\n")),
     steps,
     sourceUrl: recipe.sourceUrl || "",
@@ -2564,7 +3000,7 @@ async function handleMealPhotoUpload(event) {
   try {
     const photos = [];
     for (const file of selectedFiles) {
-      const image = await compressImageFile(file, { maxSide: 1280, quality: 0.72 });
+      const image = await compressImageFile(file, MEAL_PHOTO_IMAGE_OPTIONS);
       photos.push(
         normalizeMealPhoto({
           id: `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -2577,9 +3013,9 @@ async function handleMealPhotoUpload(event) {
     plan.afterPhotos = [...photos.filter(Boolean), ...existingPhotos].slice(0, MEAL_PHOTO_LIMIT);
     saveState();
     render();
-    toast("照片已上传，开始估算热量");
+    toast("照片已上传，开始估算热量并生成分享图");
     for (const photo of photos.filter(Boolean)) {
-      await analyzeMealPhoto(photo.id, { dateKey, quiet: true });
+      await analyzeMealPhoto(photo.id, { dateKey, autoShare: true, quiet: true });
     }
   } catch (error) {
     toast(error.message || "照片处理失败");
@@ -2591,17 +3027,42 @@ async function handleMealPhotoUpload(event) {
 async function analyzeMealPhoto(photoId, options = {}) {
   const dateKey = options.dateKey || selectedDateKey();
   const includeShareImage = Boolean(options.includeShareImage);
+  const autoShare = Boolean(options.autoShare);
   const plan = state.plans[dateKey] ? normalizePlan(state.plans[dateKey]) : null;
   const photo = planPhotos(plan).find((item) => item.id === photoId);
   if (!plan || !photo) {
     toast("没有找到这张照片");
     return;
   }
+  if (!photo.image) {
+    updateMealPhoto(dateKey, photoId, (item) => ({
+      ...item,
+      ...(includeShareImage || item.analysis
+        ? { shareStatus: "failed", shareError: "原图没有保存在本地，请重新上传后生成分享图", shareStartedAt: null }
+        : { analysisStatus: "failed", analysisError: "原图没有保存在本地，请重新上传后估算", analysisStartedAt: null })
+    }));
+    toast(includeShareImage || photo.analysis ? "原图没有保存在本地，请重新上传后生成分享图" : "原图没有保存在本地，请重新上传后估算");
+    return;
+  }
 
+  const processingStartedAt = new Date().toISOString();
   const loadingPatch = includeShareImage
-    ? { shareStatus: "loading", shareError: "" }
-    : { analysisStatus: "loading", analysisError: "" };
+    ? {
+        analysisStatus: photo.analysis ? photo.analysisStatus : "loading",
+        analysisError: "",
+        analysisStartedAt: photo.analysis ? photo.analysisStartedAt : processingStartedAt,
+        shareStatus: "loading",
+        shareError: "",
+        shareStartedAt: processingStartedAt
+      }
+    : { analysisStatus: "loading", analysisError: "", analysisStartedAt: processingStartedAt };
   updateMealPhoto(dateKey, photoId, (item) => ({ ...item, ...loadingPatch }));
+  if (!includeShareImage || !photo.analysis) {
+    schedulePhotoProcessingFallback(dateKey, photoId, "analysisStatus", "analysisStartedAt", processingStartedAt);
+  }
+  if (includeShareImage) {
+    schedulePhotoProcessingFallback(dateKey, photoId, "shareStatus", "shareStartedAt", processingStartedAt);
+  }
 
   try {
     const targets = planFoodTargets(plan);
@@ -2619,33 +3080,51 @@ async function analyzeMealPhoto(photoId, options = {}) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "热量估算失败");
-    const shareImage = payload.shareImage
-      ? await compressImageDataUrl(payload.shareImage, { maxSide: 1400, quality: 0.8 })
-      : "";
+    const shareImage = payload.shareImage ? await compressImageDataUrl(payload.shareImage, SHARE_IMAGE_OPTIONS) : "";
 
     updateMealPhoto(dateKey, photoId, (item) => ({
       ...item,
       analysis: payload.analysis,
       analysisStatus: "done",
       analysisError: "",
+      analysisStartedAt: null,
       ...(includeShareImage
         ? {
             shareImage: shareImage || item.shareImage,
             shareStatus: shareImage ? "done" : "idle",
             shareError: "",
+            shareStartedAt: null,
             shareCreatedAt: shareImage ? new Date().toISOString() : item.shareCreatedAt
           }
         : {})
     }));
     if (!options.quiet) toast(includeShareImage ? "手绘分享图已生成" : "热量估算完成");
+
+    if (autoShare) {
+      const latestPlan = state.plans[dateKey] ? normalizePlan(state.plans[dateKey]) : null;
+      const latestPhoto = planPhotos(latestPlan).find((item) => item.id === photoId);
+      if (latestPhoto?.analysis && latestPhoto.shareStatus !== "done") {
+        await analyzeMealPhoto(photoId, { dateKey, includeShareImage: true, quiet: true });
+      }
+    }
   } catch (error) {
     updateMealPhoto(dateKey, photoId, (item) => ({
       ...item,
       ...(includeShareImage
-        ? { shareStatus: "failed", shareError: error.message || "分享图生成失败" }
-        : { analysisStatus: "failed", analysisError: error.message || "热量估算失败" })
+        ? { shareStatus: "failed", shareError: error.message || "分享图生成失败", shareStartedAt: null }
+        : { analysisStatus: "failed", analysisError: error.message || "热量估算失败", analysisStartedAt: null })
     }));
     toast(error.message || (includeShareImage ? "分享图生成失败" : "热量估算失败"));
+  }
+}
+
+function generateMealShare(photoId) {
+  const plan = state.plans[selectedDateKey()] ? normalizePlan(state.plans[selectedDateKey()]) : null;
+  const photo = planPhotos(plan).find((item) => item.id === photoId);
+  if (photo?.analysis) {
+    analyzeMealPhoto(photoId, { includeShareImage: true });
+  } else {
+    analyzeMealPhoto(photoId, { autoShare: true });
   }
 }
 
@@ -2692,6 +3171,19 @@ function setView(view) {
   render();
 }
 
+function setFeaturedDish(index) {
+  ui.featuredDishIndex = Math.max(0, Number(index) || 0);
+  render();
+}
+
+function shiftFeaturedDish(shift) {
+  const dishes = filteredDishes();
+  if (!dishes.length) return;
+  const current = normalizeFeaturedDishIndex(dishes.length);
+  ui.featuredDishIndex = ((current + shift) % dishes.length + dishes.length) % dishes.length;
+  render();
+}
+
 function setSelectedDate(key) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
   ui.dateKey = key;
@@ -2709,6 +3201,7 @@ function focusMeal(meal) {
   const plan = ensureTodayPlan();
   ui.view = "wife";
   ui.meal = meal;
+  ui.featuredDishIndex = 0;
   if (isEditableDate() && plan.skipped[meal]) {
     plan.skipped[meal] = false;
     markPlanDraft(plan);
@@ -2801,7 +3294,8 @@ async function handleFormSubmit(event) {
   }
 
   const imageFile = data.get("imageFile");
-  const imageDataUrl = imageFile instanceof File && imageFile.size ? await compressImageFile(imageFile) : "";
+  const imageDataUrl =
+    imageFile instanceof File && imageFile.size ? await compressImageFile(imageFile, DEFAULT_IMAGE_OPTIONS) : "";
 
   const dish = {
     id: existingDish?.id || `dish-${Date.now()}`,
@@ -2881,6 +3375,7 @@ function applyImportedRecipe(form, recipe) {
   if (stepLines.length) form.elements.steps.value = stepLines.join("\n");
   const stepDetailsField = form.querySelector("[data-role='imported-steps']");
   if (stepDetailsField) stepDetailsField.value = serializeStepDetails(stepItems);
+  renderImportStepPreviewIntoForm(form, stepItems);
   if (recipe.note) form.elements.note.value = recipe.note;
   if (recipe.image) {
     form.querySelector("[data-role='imported-image']").value = recipe.image;
@@ -2891,6 +3386,37 @@ function applyImportedRecipe(form, recipe) {
   if ([...form.elements.category.options].some((option) => option.value === category)) {
     form.elements.category.value = category;
   }
+}
+
+function renderImportStepPreviewIntoForm(form, steps) {
+  const preview = form.querySelector("[data-role='import-step-preview']");
+  if (!preview) return;
+  const html = renderImportStepPreview(steps);
+  preview.hidden = !html;
+  preview.innerHTML = html;
+}
+
+function renderImportStepPreview(steps = []) {
+  const imageSteps = steps.filter((step) => stepImageSrc(step)).slice(0, 4);
+  if (!imageSteps.length) return "";
+  return `
+    <div>
+      <strong>步骤图预览</strong>
+      <span>查看详情时会展示步骤图；外层菜单只显示文字。</span>
+    </div>
+    <div class="import-step-grid">
+      ${imageSteps
+        .map(
+          (step, index) => `
+            <figure>
+              <img src="${escapeAttr(stepImageSrc(step))}" alt="步骤 ${index + 1}" loading="lazy" />
+              ${step.text ? `<figcaption>${escapeHtml(step.text)}</figcaption>` : ""}
+            </figure>
+          `
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function renderImportCoverPreview(form, imageSrc) {
@@ -2923,7 +3449,7 @@ async function handleCoverUpload(event) {
   if (!dishId || !file) return;
 
   try {
-    const image = await compressImageFile(file);
+    const image = await compressImageFile(file, DEFAULT_IMAGE_OPTIONS);
     state.dishes = state.dishes.map((dish) => (dish.id === dishId ? { ...dish, image } : dish));
     saveState();
     render();
@@ -2963,8 +3489,8 @@ function compressImageDataUrl(dataUrl, options = {}) {
     const image = new Image();
     image.onerror = () => reject(new Error("图片解析失败"));
     image.onload = () => {
-      const maxSide = options.maxSide || 1200;
-      const quality = options.quality || 0.78;
+      const maxSide = options.maxSide || DEFAULT_IMAGE_OPTIONS.maxSide;
+      const quality = options.quality || DEFAULT_IMAGE_OPTIONS.quality;
       const ratio = Math.min(1, maxSide / Math.max(image.width, image.height));
       const width = Math.max(1, Math.round(image.width * ratio));
       const height = Math.max(1, Math.round(image.height * ratio));
@@ -3053,6 +3579,22 @@ function toast(message) {
   setTimeout(() => node.remove(), 1800);
 }
 
+let carouselSwipeStart = null;
+
+app.addEventListener("pointerdown", (event) => {
+  if (!event.target.closest("[data-role='dish-carousel']")) return;
+  carouselSwipeStart = { x: event.clientX, y: event.clientY };
+});
+
+app.addEventListener("pointerup", (event) => {
+  if (!carouselSwipeStart) return;
+  const dx = event.clientX - carouselSwipeStart.x;
+  const dy = event.clientY - carouselSwipeStart.y;
+  carouselSwipeStart = null;
+  if (Math.abs(dx) < 54 || Math.abs(dx) < Math.abs(dy) * 1.25) return;
+  shiftFeaturedDish(dx < 0 ? 1 : -1);
+});
+
 app.addEventListener("click", (event) => {
   if (event.target.matches("[data-role='detail-backdrop']")) {
     ui.detailDishId = null;
@@ -3075,14 +3617,19 @@ app.addEventListener("click", (event) => {
 
   if (action === "set-meal") {
     ui.meal = actionTarget.dataset.meal;
+    ui.featuredDishIndex = 0;
     render();
   }
   if (action === "focus-meal") focusMeal(actionTarget.dataset.meal);
 
   if (action === "set-category") {
     ui.category = actionTarget.dataset.category;
+    ui.featuredDishIndex = 0;
     render();
   }
+
+  if (action === "set-featured-dish") setFeaturedDish(actionTarget.dataset.index);
+  if (action === "shift-featured-dish") shiftFeaturedDish(Number(actionTarget.dataset.shift) || 0);
 
   if (action === "add-dish") addDishToMeal(actionTarget.dataset.dish);
   if (action === "remove-dish") removeDishFromMeal(actionTarget.dataset.dish, actionTarget.dataset.meal);
@@ -3099,7 +3646,7 @@ app.addEventListener("click", (event) => {
   if (action === "toggle-shopping-group") toggleShoppingGroup(actionTarget.dataset.group);
   if (action === "remove-meal-photo") removeMealPhoto(actionTarget.dataset.photo);
   if (action === "analyze-meal-photo") analyzeMealPhoto(actionTarget.dataset.photo);
-  if (action === "generate-meal-share") analyzeMealPhoto(actionTarget.dataset.photo, { includeShareImage: true });
+  if (action === "generate-meal-share") generateMealShare(actionTarget.dataset.photo);
   if (action === "copy-list") copyShoppingList();
   if (action === "import-recipe-link") importRecipeFromLink(actionTarget);
   if (action === "toggle-skip") toggleMealSkip(actionTarget.dataset.meal);
@@ -3139,6 +3686,7 @@ app.addEventListener("click", (event) => {
 app.addEventListener("input", (event) => {
   if (event.target.matches("[data-role='search']")) {
     ui.search = event.target.value;
+    ui.featuredDishIndex = 0;
     render();
   }
   if (event.target.matches("[data-role='date-picker']")) {
@@ -3196,9 +3744,8 @@ async function startOnlineSession() {
   online.status = `正在同步：${online.householdCode}`;
   render();
   try {
-    await ensureOnlineUser();
     await loadRemoteState({ seedIfEmpty: true });
-    subscribeRemoteState();
+    startRemotePolling();
     online.status = `在线同步：${online.householdCode}`;
   } catch (error) {
     online.error = error.message || "同步失败";
@@ -3208,3 +3755,9 @@ async function startOnlineSession() {
     render();
   }
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && online.enabled && online.householdId) {
+    loadRemoteState().then(render).catch(() => {});
+  }
+});

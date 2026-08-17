@@ -1,10 +1,10 @@
 # 老婆点菜 / 老公厨房 Prototype
 
-一个纯前端的家庭点餐原型：老婆负责点菜和跳过餐次，确认下单后，老公在厨房看做法、买食材。
+一个家庭点餐应用：老婆负责点菜和跳过餐次，确认下单后，老公在厨房看做法、买食材。生产架构为国内 Express + PostgreSQL。
 
 ## 现在能做什么
 
-- 在线模式：配置 Supabase 后用家庭码同步菜单
+- 在线模式：通过国内 Express API 和 PostgreSQL 用家庭码同步菜单
 - 老婆端：按早餐、午餐、晚餐点菜
 - 老婆端：每餐可以选择跳过
 - 老婆端：全部餐次确认后再下单
@@ -20,19 +20,19 @@
 
 ## 怎么打开
 
-直接用浏览器打开 `index.html` 即可预览基础点餐功能。AI 热量识别、下厨房导入这类 `/api/*` 功能需要 Vercel 或等价的本地 API 服务。
-
-如果想测试 PWA 缓存，可以在这个目录启动一个静态服务：
+本地安装依赖并启动 Express：
 
 ```bash
-python3 -m http.server 5173
+npm ci
+DATABASE_URL=postgresql://... npm run migrate
+DATABASE_URL=postgresql://... npm start
 ```
 
-然后访问 `http://localhost:5173`。
+然后访问 `http://localhost:3000`。只预览本地数据时可使用 `http://localhost:3000/?local=1`。
 
 ## 下一步可以做
 
-- 部署到 Vercel，生成老婆专用链接和老公专用链接
+- 按 `DEPLOYMENT.md` 部署到已备案的阿里云域名
 - 增加每周菜单和重复提醒
 - 支持从下厨房收藏手动摘录食材和链接
 - 接真实推送通知
@@ -40,7 +40,7 @@ python3 -m http.server 5173
 
 ## AI 热量识别配置
 
-热量识别和手绘分享图由 Vercel API 调用 OpenAI。部署时需要在环境变量里配置：
+热量识别和手绘分享图由 Express API 调用 OpenAI，是不影响点菜流程的可选功能。启用时需要在阿里云服务器环境变量里配置：
 
 ```text
 OPENAI_API_KEY=...
