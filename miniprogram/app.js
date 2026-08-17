@@ -1,7 +1,7 @@
 App({
   globalData: {
-    // 完成 ICP 备案和 HTTPS 配置后替换为阿里云 API 域名，例如 https://kitchen.example.com
-    apiBase: "https://YOUR-ICP-DOMAIN.example.com",
+    // 阿里云备案后端 API 域名；备案和 HTTPS 生效前仅用于开发配置。
+    apiBase: "https://api.wife-kitchen.com",
     appName: "老婆点菜老公做"
   }
 });
