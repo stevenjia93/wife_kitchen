@@ -1,0 +1,18 @@
+[Unit]
+Description=Wife Kitchen Express API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wife_kitchen
+Group=wife_kitchen
+WorkingDirectory=/opt/wife-kitchen
+EnvironmentFile=/opt/wife-kitchen/.env.production
+ExecStart=/usr/bin/node /opt/wife-kitchen/server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

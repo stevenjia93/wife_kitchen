@@ -1,6 +1,6 @@
 # 阿里云国内部署与备案步骤
 
-目标架构：微信小程序/H5 → 已备案 HTTPS 域名 → 阿里云轻量服务器上的 Nginx → Docker 中的 Express + PostgreSQL。上线后不再依赖 Vercel 或 Supabase。
+目标架构：微信小程序/H5 → 已备案 HTTPS 域名 → 阿里云轻量服务器上的 Nginx → systemd 托管的 Express + 本机 PostgreSQL。上线后不再依赖 Vercel、Supabase 或 Docker Hub。
 
 ## 0. 先区分两类备案
 
@@ -30,14 +30,14 @@
 
 ## 3. 配置 PostgreSQL
 
-当前轻量服务器的 2 核 2 GB/40 GB 配置足够小规模家庭使用。为避免新增费用，`compose.yaml` 会在同一台服务器启动 PostgreSQL，并使用 Docker 私有网络连接；数据库端口不映射到公网。
+当前轻量服务器的 2 核 2 GB/40 GB 配置足够小规模家庭使用。生产服务器使用系统仓库中的 PostgreSQL，通过 Unix Socket 与 Express 通信；5432 不开放公网。服务器上的 3000 已被其他进程使用，因此 Wife Kitchen 实际监听本机 3100。
 
 在服务器 `/opt/wife-kitchen/.env.production` 中配置：
 
 ```text
-PORT=3000
+PORT=3100
 TRUST_PROXY=true
-POSTGRES_HOST=postgres
+POSTGRES_HOST=/实际的 PostgreSQL Unix Socket 目录
 POSTGRES_PORT=5432
 POSTGRES_DB=wife_kitchen
 POSTGRES_USER=wife_kitchen
@@ -46,37 +46,47 @@ DATABASE_SSL=disable
 DATABASE_POOL_MAX=10
 ```
 
-需要更高可用性时再迁移到同地域 RDS PostgreSQL：设置 `DATABASE_URL`、RDS 内网白名单和 SSL 即可，应用代码无需改变。
+系统用户和数据库角色统一使用 `wife_kitchen`，PostgreSQL 的 `pg_hba.conf` 仅允许这个同名本机用户通过 peer 认证。需要更高可用性时再迁移到同地域 RDS PostgreSQL：设置 `DATABASE_URL`、RDS 内网白名单和 SSL 即可，应用代码无需改变。
 
 ## 4. 部署 Express
 
-在 ECS 安装 Docker Engine 和 Docker Compose 插件，然后：
+从发布分支拉取代码，并从阿里云系统仓库安装 Node.js、npm、PostgreSQL 和 Nginx。依赖安装使用锁文件：
 
 ```bash
-sudo mkdir -p /opt/wife-kitchen
-sudo chown "$USER" /opt/wife-kitchen
+git clone --depth 1 --branch codex/aliyun-domestic-migration \
+  https://github.com/stevenjia93/wife_kitchen.git /opt/wife-kitchen
 cd /opt/wife-kitchen
-git clone 你的私有仓库地址 .
-cp .env.example .env.production
+npm ci --omit=dev
 ```
 
-编辑 `.env.production` 后执行：
+初始化数据库、创建 `wife_kitchen` 角色和数据库后执行迁移：
 
 ```bash
-docker compose build
-docker compose run --rm app npm run migrate
-docker compose up -d
-curl http://127.0.0.1:3000/healthz
+set -a
+. ./.env.production
+set +a
+npm run migrate
 ```
 
-健康检查必须返回 `{"ok":true}`。`compose.yaml` 只把 3000 端口绑定到本机，公网只开放 Nginx 的 80/443。
+将 `deploy/wife-kitchen.service.example` 安装到 `/etc/systemd/system/wife-kitchen.service`，再启动服务：
 
-在 ICP 和 HTTPS 完成前，可以暂时使用 `deploy/nginx-http.conf.example` 通过公网 IP 做后端验收；这个 HTTP/IP 地址不能填入微信小程序合法域名，也不能作为正式生产入口。
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now postgresql nginx wife-kitchen
+curl http://127.0.0.1:3100/healthz
+```
+
+健康检查必须返回 `{"ok":true}`。公网只开放 Nginx 的 80/443。`compose.yaml` 保留为其他全新服务器的 Docker 备选方案，但当前阿里云服务器不依赖 Docker Hub。
+
+在 ICP 和 HTTPS 完成前，可以暂时使用 `deploy/nginx-http.conf.example` 通过公网 IP 做后端验收；当前服务器需要把其中的上游端口从 3000 改为 3100。这个 HTTP/IP 地址不能填入微信小程序合法域名，也不能作为正式生产入口。
 
 如果要保留原 Supabase 菜单数据，在首次启动新服务前临时为迁移命令注入旧项目的 `SUPABASE_URL` 和 `SUPABASE_SECRET_KEY`，执行：
 
 ```bash
-docker compose run --rm app npm run migrate:supabase
+set -a
+. ./.env.production
+set +a
+npm run migrate:supabase
 ```
 
 核对数据后立即从服务器环境中删除 Supabase 变量。迁移脚本不会把密钥写入代码或数据库。
