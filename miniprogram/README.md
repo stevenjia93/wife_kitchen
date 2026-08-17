@@ -13,7 +13,7 @@
 完成备案和 HTTPS 后，在 `app.js` 中填写唯一的生产 API 域名：
 
 ```js
-apiBase: "https://kitchen.example.com"
+apiBase: "https://api.wife-kitchen.com"
 ```
 
 ## 微信后台域名

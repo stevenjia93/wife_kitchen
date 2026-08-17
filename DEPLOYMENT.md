@@ -15,7 +15,7 @@
 - 域名后缀可备案，域名已实名认证且信息已同步。
 - ECS 位于中国内地，具有公网 IP，并满足阿里云当前备案实例时长和计费要求。
 - 推荐 RDS PostgreSQL 与 ECS 位于同地域、同 VPC；只开放内网白名单给 ECS，不开放公网 5432。
-- 为后端固定一个长期域名，例如 `kitchen.example.com`，不要把 ECS IP 写进小程序。
+- 后端长期域名使用 `api.wife-kitchen.com`，不要把 ECS IP 写进小程序。
 
 ## 2. 在阿里云申请 ICP 备案
 
@@ -78,7 +78,7 @@ curl http://127.0.0.1:3100/healthz
 
 健康检查必须返回 `{"ok":true}`。公网只开放 Nginx 的 80/443。`compose.yaml` 保留为其他全新服务器的 Docker 备选方案，但当前阿里云服务器不依赖 Docker Hub。
 
-在 ICP 和 HTTPS 完成前，可以暂时使用 `deploy/nginx-http.conf.example` 通过公网 IP 做后端验收；当前服务器需要把其中的上游端口从 3000 改为 3100。这个 HTTP/IP 地址不能填入微信小程序合法域名，也不能作为正式生产入口。
+在 ICP 和 HTTPS 完成前，可以暂时使用 `deploy/nginx-http.conf.example` 通过公网 IP 做后端验收；示例已使用当前服务的本机端口 3100。这个 HTTP/IP 地址不能填入微信小程序合法域名，也不能作为正式生产入口。
 
 如果要保留原 Supabase 菜单数据，在首次启动新服务前临时为迁移命令注入旧项目的 `SUPABASE_URL` 和 `SUPABASE_SECRET_KEY`，执行：
 
@@ -93,7 +93,7 @@ npm run migrate:supabase
 
 ## 5. 配置域名、HTTPS 与 Nginx
 
-1. ICP 通过后，将 `kitchen.example.com` 的 A 记录解析到 ECS 公网 IP。
+1. ICP 通过后，将 `api.wife-kitchen.com` 的 A 记录解析到 ECS 公网 IP。
 2. 申请并部署该域名的有效 TLS 证书。
 3. 根据 `deploy/nginx.conf.example` 创建 Nginx 站点，替换域名和证书路径。
 4. 安全组只开放 22（限制来源）、80、443；不要开放 3000 和 5432。
@@ -102,7 +102,7 @@ npm run migrate:supabase
 ```bash
 sudo nginx -t
 sudo systemctl reload nginx
-curl https://kitchen.example.com/healthz
+curl https://api.wife-kitchen.com/healthz
 ```
 
 ## 6. 切换 H5 和微信小程序
@@ -116,13 +116,13 @@ window.WIFE_KITCHEN_CONFIG = { apiBase: "", onlineEnabled: true };
 将 `miniprogram/app.js` 中的占位值替换为：
 
 ```js
-apiBase: "https://kitchen.example.com"
+apiBase: "https://api.wife-kitchen.com"
 ```
 
 在微信公众平台 → 开发管理 → 开发设置 → 服务器域名中，将以下域名配置为 `request` 合法域名：
 
 ```text
-https://kitchen.example.com
+https://api.wife-kitchen.com
 ```
 
 不再配置 Supabase 或 Vercel 域名。当前小程序不使用 `web-view`，无需业务域名。
