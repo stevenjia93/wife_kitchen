@@ -1387,7 +1387,7 @@ function render() {
   const requiresHousehold = online.enabled && !online.householdId;
   const plan = requiresHousehold ? normalizePlan(emptyPlan()) : ensureTodayPlan();
   const isWife = ui.view === "wife";
-  document.title = isWife ? "老婆点菜" : "老公厨房";
+  document.title = "老婆点菜单";
   app.innerHTML = `
     <div class="app-shell">
       ${renderHeader(plan)}
@@ -1408,7 +1408,7 @@ function renderHeader(plan) {
         <div class="brand-mark">${isWife ? "点" : "厨"}</div>
         <div>
           <span class="brand-eyebrow">${isWife ? "Private Kitchen Brief" : "Chef Console"}</span>
-          <h1>${isWife ? "老婆点菜台" : "老公厨房台"}</h1>
+          <h1>老婆点菜单</h1>
           <p class="subtle">${dayLabel()} · ${dateModeText()}，${isWife ? wifeDateHint() : orderStatusText(plan)}</p>
         </div>
       </div>
