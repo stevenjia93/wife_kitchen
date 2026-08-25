@@ -26,7 +26,7 @@ async function handler(req, res) {
   try {
     const body = await readJsonBody(req);
     const query = normalizeQuery(body.query);
-    const searchUrl = `https://m.xiachufang.com/search/?keyword=${encodeURIComponent(query)}`;
+    const searchUrl = `https://www.xiachufang.com/search/?keyword=${encodeURIComponent(query)}`;
     const response = await fetch(searchUrl, {
       headers: {
         "user-agent": USER_AGENT,
@@ -93,7 +93,7 @@ async function importBestRecipe(candidates, query, options = {}) {
     }
   }
 
-  return best?.recipe || null;
+  return best?.recipe || recipeFromSearchCandidate(ranked[0]);
 }
 
 function isUsefulRecipe(recipe) {
@@ -105,25 +105,30 @@ function isUsefulRecipe(recipe) {
 
 function extractSearchCandidates(html, searchUrl, query) {
   const found = new Map();
-  const anchors = html.matchAll(/<a\b([^>]*href=["'][^"']*\/recipe\/\d+\/?[^"']*["'][^>]*)>([\s\S]*?)<\/a>/gi);
+  const cards = html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi);
 
-  for (const [, attrs, body] of anchors) {
-    const href = attr(attrs, "href");
+  for (const [, body] of cards) {
+    const href = firstMatch(body, /<a\b[^>]*href=["']([^"']*\/recipe\/\d+\/?[^"']*)["'][^>]*>/i);
     const url = absoluteUrl(href, searchUrl);
     if (!url || found.has(url)) continue;
 
     const title =
-      attr(body, "title") ||
+      firstMatch(body, /<p\b[^>]*class=["'][^"']*name[^"']*["'][^>]*>[\s\S]*?<a\b[^>]*>([\s\S]*?)<\/a>/i) ||
       attr(body, "alt") ||
-      firstMatch(body, /<header\b[^>]*class=["'][^"']*name[^"']*["'][^>]*>([\s\S]*?)<\/header>/i) ||
       "";
-    const ratingText = firstMatch(body, /评分\s*<span[^>]*>([\d.]+)<\/span>/i);
-    const cookedText = firstMatch(body, /<span[^>]*class=["'][^"']*ml10[^"']*["'][^>]*>([\d,]+)<\/span>\s*人做过/i);
+    const ratingText = firstMatch(body, /综合评分(?:\s|&nbsp;)*<span[^>]*>([\d.]+)<\/span>/i);
+    const cookedText = firstMatch(body, /（(?:\s|&nbsp;)*<span[^>]*>([\d,]+)<\/span>(?:\s|&nbsp;)*做过/i);
+    const ingredientText = cleanText(
+      decodeHtml(stripTags(firstMatch(body, /<p\b[^>]*class=["'][^"']*ing[^"']*["'][^>]*>([\s\S]*?)<\/p>/i)))
+    );
+    const image = absoluteUrl(attr(body, "data-src") || attr(body, "src"), searchUrl);
     const candidate = {
       url,
       title: cleanText(decodeHtml(stripTags(title))),
       rating: Number(ratingText) || 0,
       cookedCount: Number(String(cookedText || "").replace(/,/g, "")) || 0,
+      image,
+      ingredients: ingredientText.split(/[、；;\n]+/).map(cleanText).filter(Boolean).slice(0, 20),
       rank: found.size + 1
     };
     candidate.score = scoreSearchCandidate(candidate, query);
@@ -131,6 +136,25 @@ function extractSearchCandidates(html, searchUrl, query) {
   }
 
   return Array.from(found.values()).sort((a, b) => b.score - a.score);
+}
+
+function recipeFromSearchCandidate(candidate) {
+  if (!candidate?.url) return null;
+  const ratingNote = candidate.rating ? `下厨房评分 ${candidate.rating}` : "下厨房高分参考";
+  const cookedNote = candidate.cookedCount ? `，${candidate.cookedCount} 人做过` : "";
+  return {
+    name: candidate.title || "下厨房参考菜谱",
+    sourceUrl: candidate.url,
+    image: candidate.image || "",
+    imageUrl: candidate.image || "",
+    ingredients: candidate.ingredients || [],
+    steps: [],
+    stepDetails: [],
+    time: 20,
+    note: `${ratingNote}${cookedNote}。详情页触发访问验证时，请打开来源链接查看完整步骤。`,
+    searchRating: candidate.rating || 0,
+    searchCookedCount: candidate.cookedCount || 0
+  };
 }
 
 function scoreSearchCandidate(candidate, query) {
@@ -256,6 +280,7 @@ function httpError(message, statusCode) {
 module.exports = handler;
 module.exports._internals = {
   extractSearchCandidates,
+  recipeFromSearchCandidate,
   scoreSearchCandidate,
   scoreRecipeCompleteness
 };

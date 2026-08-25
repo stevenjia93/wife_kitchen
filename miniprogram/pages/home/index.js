@@ -315,7 +315,7 @@ Page({
     const wishes = wishesForMeal(plan, meal).map((wish) => ({
       id: wish.id,
       name: wish.name,
-      meta: "许愿菜",
+      meta: wishStatusText(wish),
       imageInitial: "愿",
       canRemove: false,
       meal
@@ -345,7 +345,11 @@ Page({
               }
             : null;
         }).filter(Boolean),
-        wishes: wishes.map((wish) => ({ ...wish, mealLabel: mealLabels[wish.meal] }))
+        wishes: wishes.map((wish) => ({
+          ...wish,
+          mealLabel: mealLabels[wish.meal],
+          statusText: wishStatusText(wish)
+        }))
       };
     });
   },
@@ -379,9 +383,32 @@ Page({
             stepsText: (dish.steps || []).slice(0, 5).join(" / ")
           };
         }).filter(Boolean),
-        wishes: wishes.map((wish) => ({ ...wish, mealLabel: mealLabels[wish.meal] }))
+        wishes: wishes.map((wish) => this.buildWishView(wish))
       };
     });
+  },
+
+  buildWishView(wish) {
+    const recipe = wish.recipe && typeof wish.recipe === "object" ? wish.recipe : {};
+    const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients.map(String).filter(Boolean) : [];
+    const steps = Array.isArray(recipe.steps) ? recipe.steps.map(String).filter(Boolean) : [];
+    return {
+      id: wish.id,
+      name: wish.name,
+      meal: wish.meal,
+      mealLabel: mealLabels[wish.meal],
+      status: wish.status,
+      statusText: wishStatusText(wish),
+      searching: wish.status === "searching",
+      hasRecipe: Boolean(recipe.name || recipe.sourceUrl),
+      recipeName: recipe.name || wish.name,
+      sourceUrl: recipe.sourceUrl || "",
+      ratingText: recipe.searchRating ? `评分 ${recipe.searchRating}` : "",
+      cookedText: recipe.searchCookedCount ? `${recipe.searchCookedCount} 人做过` : "",
+      ingredientText: ingredients.slice(0, 10).join("、"),
+      stepText: steps.slice(0, 5).join(" / "),
+      error: wish.error || "暂时没找到参考菜谱。"
+    };
   },
 
   buildManagedDish(dish) {
@@ -725,20 +752,111 @@ Page({
     if (!name) return showToast("先输入想吃的菜名");
     const plan = ensurePlan(this.state, this.data.dateKey);
     if (plan.skipped[this.data.meal]) return showToast("这餐已跳过，先恢复点餐");
+    if (wishesForMeal(plan, this.data.meal).some((wish) => wish.name === name)) {
+      return showToast("这道许愿菜已经点过了");
+    }
+    const dateKey = this.data.dateKey;
+    const wish = {
+      id: `wish-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      meal: this.data.meal,
+      name,
+      note: "",
+      status: "searching",
+      createdAt: new Date().toISOString(),
+      searchStartedAt: new Date().toISOString(),
+      recipe: null,
+      error: ""
+    };
     plan.wishes = [
-      {
-        id: `wish-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        meal: this.data.meal,
-        name,
-        note: "",
-        status: "searching",
-        createdAt: new Date().toISOString()
-      },
+      wish,
       ...(plan.wishes || [])
     ];
     markPlanDraft(plan);
     this.setData({ wishName: "" });
     this.persistState();
+    showToast(`正在找：${name}`);
+    this.searchWishRecipe(dateKey, wish.id);
+  },
+
+  async searchWishRecipe(dateKey, wishId) {
+    const current = this.findWishLocation(wishId, dateKey);
+    if (!current) return;
+    current.wish.status = "searching";
+    current.wish.error = "";
+    current.wish.searchStartedAt = new Date().toISOString();
+    this.persistState();
+    try {
+      const payload = await requestApi("/api/search-recipe", {
+        query: current.wish.name,
+        includeImages: false,
+        includeStepImages: false
+      });
+      const latest = this.findWishLocation(wishId, dateKey);
+      if (!latest) return;
+      latest.wish.status = "found";
+      latest.wish.recipe = payload.recipe || null;
+      latest.wish.error = "";
+      latest.wish.searchStartedAt = "";
+      this.persistState();
+      showToast(`已找到：${latest.wish.recipe?.name || latest.wish.name}`, "success");
+    } catch (error) {
+      const latest = this.findWishLocation(wishId, dateKey);
+      if (!latest) return;
+      latest.wish.status = "failed";
+      latest.wish.error = error.message || "没找到参考菜谱";
+      latest.wish.searchStartedAt = "";
+      this.persistState();
+      showToast(latest.wish.error);
+    }
+  },
+
+  findWishLocation(wishId, preferredDateKey = this.data.dateKey) {
+    const keys = [preferredDateKey, ...Object.keys(this.state.plans || {}).filter((key) => key !== preferredDateKey)];
+    for (const dateKey of keys) {
+      const plan = ensurePlan(this.state, dateKey);
+      const wish = (plan.wishes || []).find((item) => item.id === wishId);
+      if (wish) return { dateKey, plan, wish };
+    }
+    return null;
+  },
+
+  retryWishSearch(event) {
+    const wishId = event.currentTarget.dataset.id;
+    const found = this.findWishLocation(wishId);
+    if (!found) return;
+    found.wish.recipe = null;
+    this.searchWishRecipe(found.dateKey, wishId);
+  },
+
+  declineWish(event) {
+    const found = this.findWishLocation(event.currentTarget.dataset.id);
+    if (!found) return;
+    found.wish.status = "declined";
+    found.wish.error = "";
+    found.wish.searchStartedAt = "";
+    markPlanDraft(found.plan);
+    this.persistState();
+    showToast(`已标记这次不做：${found.wish.name}`);
+  },
+
+  acceptWish(event) {
+    const found = this.findWishLocation(event.currentTarget.dataset.id);
+    if (!found || !found.wish.recipe) return showToast("还没有可用的参考菜谱");
+    const dish = dishFromRecipe(found.wish.recipe, found.wish.name);
+    dish.meals = [found.wish.meal];
+    dish.difficulty = "挑战菜";
+    dish.note = found.wish.note ? `老婆许愿：${found.wish.note}` : "老婆许愿菜，按下厨房高分参考尝试。";
+    const existing = activeDishes(this.state).find(
+      (item) => item.name === dish.name || (item.sourceUrl && item.sourceUrl === dish.sourceUrl)
+    );
+    const dishId = existing ? existing.id : dish.id;
+    if (existing && !existing.meals.includes(found.wish.meal)) existing.meals.push(found.wish.meal);
+    if (!existing) this.state.dishes = [dish, ...(this.state.dishes || [])];
+    if (!found.plan[found.wish.meal].includes(dishId)) found.plan[found.wish.meal].push(dishId);
+    found.plan.wishes = found.plan.wishes.filter((wish) => wish.id !== found.wish.id);
+    markPlanDraft(found.plan);
+    this.persistState();
+    showToast(`已接招：${dish.name}`, "success");
   },
 
   submitOrder() {
@@ -1238,6 +1356,15 @@ function inferCategory(name, recipe) {
   if (/鸡|鸭|鱼|虾|肉|牛|羊|排骨|翅/.test(text)) return "肉菜";
   if (/菜|瓜|豆|笋|菇|藕|茄|椒/.test(text)) return "蔬菜";
   return "快手菜";
+}
+
+function wishStatusText(wish) {
+  if (wish.status === "searching") return "正在自动找下厨房高分菜谱";
+  if (wish.status === "found") return "已找到下厨房高分参考";
+  if (wish.status === "declined") return "这次不做";
+  if (wish.status === "failed") return "搜索失败，可重新找";
+  if (wish.status === "accepted") return "已接招";
+  return "许愿菜";
 }
 
 function nonDataUrl(value) {

@@ -96,6 +96,7 @@
 
         <view class="panel wish-box">
           <view class="section-title">想吃菜单外的菜</view>
+          <view class="subtitle">输入菜名后，自动匹配下厨房高分菜谱。</view>
           <view class="wish-row">
             <input class="wish-input" value="{{wishName}}" placeholder="比如：蒜香排骨" bindinput="onWishNameInput" />
             <button class="button dark wish-btn" bindtap="addWish">许愿</button>
@@ -131,7 +132,7 @@
             <view wx:for="{{item.wishes}}" wx:key="id" class="order-item wish">
               <view>
                 <view class="order-name">{{item.name}}</view>
-                <view class="subtitle">许愿菜</view>
+                <view class="subtitle">{{item.statusText}}</view>
               </view>
             </view>
           </view>
@@ -174,8 +175,32 @@
                 </button>
               </view>
               <view wx:for="{{item.wishes}}" wx:key="id" class="cook-card wish">
-                <view class="cook-title">{{item.name}}</view>
-                <view class="subtitle">老婆许愿菜，先按经验发挥。</view>
+                <view class="wish-title-row">
+                  <view class="cook-title">{{item.name}}</view>
+                  <view class="pill wish-status">{{item.statusText}}</view>
+                </view>
+                <view wx:if="{{item.searching}}" class="mini-empty">正在自动搜索下厨房高分菜谱。</view>
+                <block wx:elif="{{item.hasRecipe}}">
+                  <view class="mini-section">
+                    <text class="wish-recipe-name">{{item.recipeName}}</text>
+                    <text wx:if="{{item.ratingText || item.cookedText}}" class="subtitle">{{item.ratingText}} {{item.cookedText}}</text>
+                  </view>
+                  <view wx:if="{{item.ingredientText}}" class="mini-section">
+                    <text class="mini-label">原料参考</text>
+                    <text>{{item.ingredientText}}</text>
+                  </view>
+                  <view wx:if="{{item.stepText}}" class="mini-section">
+                    <text class="mini-label">做法参考</text>
+                    <text>{{item.stepText}}</text>
+                  </view>
+                </block>
+                <view wx:else class="mini-empty">{{item.error}}</view>
+                <view class="wish-actions">
+                  <button wx:if="{{item.sourceUrl}}" class="button ghost compact" data-url="{{item.sourceUrl}}" bindtap="copyRecipeSource">复制下厨房链接</button>
+                  <button wx:if="{{item.hasRecipe}}" class="button primary compact" data-id="{{item.id}}" bindtap="acceptWish">加入菜单</button>
+                  <button class="button ghost compact" loading="{{item.searching}}" disabled="{{item.searching}}" data-id="{{item.id}}" bindtap="retryWishSearch">重新找</button>
+                  <button class="button ghost compact" data-id="{{item.id}}" bindtap="declineWish">这次不做</button>
+                </view>
               </view>
             </view>
           </view>

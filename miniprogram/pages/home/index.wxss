@@ -633,6 +633,36 @@
   padding: 22rpx;
 }
 
+.wish-title-row,
+.wish-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
+.wish-status {
+  flex: 0 1 auto;
+  font-size: 20rpx;
+}
+
+.wish-recipe-name,
+.mini-label {
+  color: #171917;
+  font-weight: 900;
+}
+
+.wish-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 18rpx;
+}
+
+.wish-actions .button {
+  width: auto;
+  margin: 0;
+}
+
 .cook-card-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

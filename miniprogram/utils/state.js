@@ -320,13 +320,28 @@ function normalizeWish(wish) {
   const name = String((wish && wish.name) || "").trim();
   if (!name) return null;
   const meal = mealOrder.includes(wish.meal) ? wish.meal : "dinner";
+  const status = ["searching", "found", "accepted", "declined", "failed"].includes(wish.status)
+    ? wish.status
+    : "searching";
+  const createdAt = wish.createdAt || new Date().toISOString();
+  const searchStartedAt = wish.searchStartedAt || (status === "searching" ? createdAt : "");
+  const searchIsStale =
+    status === "searching" &&
+    searchStartedAt &&
+    Number.isFinite(Date.parse(searchStartedAt)) &&
+    Date.now() - Date.parse(searchStartedAt) > 120000;
   return {
     id: wish.id || `wish-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     meal,
     name,
     note: String(wish.note || "").trim(),
-    status: wish.status || "searching",
-    createdAt: wish.createdAt || new Date().toISOString()
+    status: searchIsStale ? "failed" : status,
+    createdAt,
+    searchStartedAt: searchIsStale ? "" : searchStartedAt,
+    recipe: wish.recipe && typeof wish.recipe === "object" ? wish.recipe : null,
+    error: searchIsStale
+      ? "找菜超时了，可以重新搜索。"
+      : String(wish.error || "").trim()
   };
 }
 
