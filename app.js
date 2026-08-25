@@ -1396,6 +1396,9 @@ function render() {
       ${requiresHousehold ? renderHouseholdGate() : isWife ? renderWifeView(plan) : renderHusbandView(plan)}
       ${renderMenuDrawer()}
       ${renderDetailModal()}
+      <footer class="site-footer">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">京ICP备2026032059号-2</a>
+      </footer>
     </div>
   `;
 }

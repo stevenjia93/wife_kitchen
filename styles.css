@@ -3771,6 +3771,22 @@ body::before {
   background: rgba(255, 255, 255, 0.52);
 }
 
+.site-footer {
+  padding: 18px 12px 6px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.site-footer a {
+  color: rgba(8, 9, 9, 0.58);
+  text-decoration: none;
+}
+
+.site-footer a:hover {
+  color: #080909;
+  text-decoration: underline;
+}
+
 @keyframes plate-sweep {
   from {
     opacity: 0;
