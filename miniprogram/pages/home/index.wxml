@@ -10,17 +10,35 @@
     </view>
   </view>
 
-  <view wx:if="{{!householdCode}}" class="gate panel">
-    <view class="gate-title">输入家庭码</view>
-    <view class="gate-copy">同一个家庭码会进入同一份菜单和点餐记录。建议使用只有家里人知道的长一点的码。</view>
+  <view wx:if="{{authLoading}}" class="gate panel">
+    <view class="gate-title">正在微信登录</view>
+    <view class="gate-copy">正在安全地确认你的身份和家庭成员关系。</view>
+  </view>
+
+  <view wx:elif="{{!householdId}}" class="gate panel">
+    <view class="gate-title">选择你的家庭</view>
+    <view class="gate-copy">已登录为 {{userDisplayName}}。每个家庭都有独立菜单，只有受邀请的成员可以进入。</view>
+    <view wx:if="{{households.length}}" class="household-list">
+      <button
+        wx:for="{{households}}"
+        wx:key="id"
+        class="household-option"
+        data-id="{{item.id}}"
+        bindtap="selectHousehold"
+      >
+        <text>{{item.name}}</text>
+        <text>{{item.role === 'owner' ? '我创建的' : '已加入'}}</text>
+      </button>
+    </view>
+    <view class="gate-copy create-household-copy">创建一个新家庭</view>
     <input
       class="gate-input"
-      value="{{householdInput}}"
-      placeholder="比如 home-kitchen-2026"
-      auto-focus="true"
-      bindinput="onHouseholdInput"
+      value="{{newHouseholdName}}"
+      placeholder="比如：嘉嘉的小厨房"
+      bindinput="onHouseholdNameInput"
     />
-    <button class="button primary" loading="{{syncing}}" bindtap="joinHousehold">进入家庭菜单</button>
+    <button class="button primary" loading="{{syncing}}" bindtap="createHousehold">创建并进入</button>
+    <view class="gate-copy invite-hint">收到家庭分享卡片时，打开卡片即可自动加入，无需再输入家庭码。</view>
   </view>
 
   <block wx:else>
@@ -38,9 +56,9 @@
     </view>
 
     <view class="sync-row">
-      <view class="pill">{{householdCode}}</view>
+      <view class="pill">{{householdName}}</view>
       <view class="sync-actions">
-        <button class="share-house" open-type="share">分享</button>
+        <button class="share-house" open-type="share" disabled="{{!inviteReady}}">{{inviteReady ? '邀请加入' : '准备邀请'}}</button>
         <button class="switch-house" bindtap="leaveHousehold">切换家庭</button>
       </view>
     </view>

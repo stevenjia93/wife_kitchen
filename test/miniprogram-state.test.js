@@ -3,10 +3,12 @@ const assert = require("node:assert/strict");
 const { createHandler, _internals } = require("../api/miniprogram-state");
 
 test("loads an existing household state", async () => {
+  const householdId = "11111111-1111-4111-8111-111111111111";
   const database = {
-    findOrCreateHousehold: async (code) => {
-      assert.equal(code, "family-2026");
-      return "household-1";
+    findHouseholdMembership: async (userId, id) => {
+      assert.equal(userId, "user-1");
+      assert.equal(id, householdId);
+      return { role: "owner", name: "嘉嘉的小厨房" };
     },
     loadHouseholdState: async () => ({
       payload: { dishes: [{ id: "dish-1", name: "番茄炒蛋" }] },
@@ -14,33 +16,37 @@ test("loads an existing household state", async () => {
     }),
     saveHouseholdState: async () => assert.fail("load must not save an unchanged payload")
   };
+  const auth = { requireUser: async () => ({ id: "user-1" }) };
   const response = responseRecorder();
 
-  await createHandler(database)({ method: "POST", body: { code: "Family-2026" } }, response);
+  await createHandler(database, auth)({ method: "POST", body: { householdId } }, response);
 
   assert.equal(response.statusCode, 200);
-  assert.equal(response.body.householdId, "household-1");
+  assert.equal(response.body.householdId, householdId);
+  assert.equal(response.body.role, "owner");
   assert.equal(response.body.payload.dishes[0].name, "番茄炒蛋");
   assert.equal(response.body.updatedAt, "2026-08-17T00:00:00.000Z");
 });
 
 test("saves compacted state without embedded data images", async () => {
+  const householdId = "22222222-2222-4222-8222-222222222222";
   let savedPayload;
   const database = {
-    findOrCreateHousehold: async () => "household-2",
+    findHouseholdMembership: async () => ({ role: "member", name: "我们的家" }),
     loadHouseholdState: async () => assert.fail("save must not load"),
     saveHouseholdState: async (_householdId, payload) => {
       savedPayload = payload;
       return new Date("2026-08-17T01:00:00.000Z");
     }
   };
+  const auth = { requireUser: async () => ({ id: "user-2" }) };
   const response = responseRecorder();
 
-  await createHandler(database)(
+  await createHandler(database, auth)(
     {
       method: "POST",
       body: {
-        code: "home",
+        householdId,
         payload: {
           dishes: [{ id: "dish-2", image: "data:image/jpeg;base64,abc", imageUrl: "https://img.example/dish.jpg" }],
           plans: {}
@@ -56,20 +62,39 @@ test("saves compacted state without embedded data images", async () => {
   assert.equal(JSON.stringify(savedPayload).includes("data:image"), false);
 });
 
-test("rejects an invalid household code before database access", async () => {
+test("rejects an invalid household id before membership access", async () => {
   const database = {
-    findOrCreateHousehold: async () => assert.fail("invalid input must not access database")
+    findHouseholdMembership: async () => assert.fail("invalid input must not access database")
   };
+  const auth = { requireUser: async () => ({ id: "user-3" }) };
   const response = responseRecorder();
 
-  await createHandler(database)({ method: "POST", body: { code: "不合法" } }, response);
+  await createHandler(database, auth)({ method: "POST", body: { householdId: "不合法" } }, response);
 
   assert.equal(response.statusCode, 400);
-  assert.match(response.body.error, /只能包含/);
+  assert.match(response.body.error, /家庭编号/);
 });
 
-test("normalizes household codes", () => {
-  assert.equal(_internals.normalizeHouseholdCode("  Family_A  "), "family_a");
+test("rejects state access for a non-member", async () => {
+  const database = {
+    findHouseholdMembership: async () => null,
+    loadHouseholdState: async () => assert.fail("non-member must not load household state")
+  };
+  const auth = { requireUser: async () => ({ id: "user-4" }) };
+  const response = responseRecorder();
+
+  await createHandler(database, auth)(
+    { method: "POST", body: { householdId: "55555555-5555-4555-8555-555555555555" } },
+    response
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.match(response.body.error, /不是这个家庭的成员/);
+});
+
+test("normalizes household ids", () => {
+  const id = "33333333-3333-4333-8333-333333333333";
+  assert.equal(_internals.normalizeHouseholdId(`  ${id}  `), id);
 });
 
 function responseRecorder() {

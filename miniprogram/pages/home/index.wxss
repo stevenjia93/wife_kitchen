@@ -114,6 +114,47 @@
   padding: 0 22rpx;
 }
 
+.household-list {
+  margin-top: 24rpx;
+}
+
+.household-option {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 84rpx;
+  align-items: center;
+  justify-content: space-between;
+  border: 1rpx solid rgba(37, 111, 83, 0.18);
+  border-radius: 16rpx;
+  background: rgba(255, 255, 255, 0.68);
+  color: #171917;
+  font-size: 27rpx;
+  font-weight: 900;
+  text-align: left;
+}
+
+.household-option + .household-option {
+  margin-top: 12rpx;
+}
+
+.household-option text:last-child {
+  color: #6d756e;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.create-household-copy {
+  margin-top: 28rpx;
+  color: #171917;
+  font-weight: 900;
+}
+
+.invite-hint {
+  margin-top: 20rpx;
+  font-size: 22rpx;
+}
+
 .privacy-contract-link {
   width: 240rpx;
   margin: 24rpx auto 8rpx;

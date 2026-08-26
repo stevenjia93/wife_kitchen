@@ -48,3 +48,17 @@ DASHSCOPE_VISION_MODEL=qwen3-vl-plus
 DASHSCOPE_IMAGE_MODEL=qwen-image-3.0-pro
 DASHSCOPE_IMAGE_SIZE=1024*1280
 ```
+
+## 微信登录与家庭成员
+
+小程序使用 `wx.login` 获取一次性登录凭证，由国内 Express 服务调用微信 `code2Session` 换取用户标识。服务器签发随机会话令牌并只保存其 SHA-256 哈希；家庭菜单读写必须通过成员校验。每个用户可创建多个家庭，也可通过 7 天有效、最多使用 5 次的分享邀请加入家庭。
+
+服务器环境变量：
+
+```text
+WECHAT_APP_ID=wxf4ebe7e96ab81d1e
+WECHAT_APP_SECRET=...
+WECHAT_SESSION_DAYS=30
+```
+
+运行 `npm run migrate` 会按文件名顺序执行 `server/migrations/` 下的幂等迁移。旧家庭首次升级时，已在设备中保存家庭码的登录用户会认领该家庭；认领后其他成员必须通过邀请加入。

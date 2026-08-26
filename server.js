@@ -19,7 +19,11 @@ app.get("/healthz", async (_req, res) => {
   }
 });
 
+app.use("/api/wechat-auth", fixedWindowLimit({ windowMs: 60_000, max: 20 }));
+app.use("/api/households", fixedWindowLimit({ windowMs: 60_000, max: 60 }));
 app.use("/api/miniprogram-state", fixedWindowLimit({ windowMs: 60_000, max: 120 }));
+mountHandler("/api/wechat-auth", require("./api/wechat-auth"));
+mountHandler("/api/households", require("./api/households"));
 mountHandler("/api/miniprogram-state", require("./api/miniprogram-state"));
 mountHandler("/api/search-recipe", require("./api/search-recipe"));
 mountHandler("/api/import-recipe", require("./api/import-recipe"));

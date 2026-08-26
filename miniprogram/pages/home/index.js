@@ -1,5 +1,5 @@
 const stateUtils = require("../../utils/state");
-const { requestApi, showToast, requirePrivacyAuthorization } = require("../../utils/api");
+const { AUTH_KEY, loginWithWechat, requestApi, showToast, requirePrivacyAuthorization } = require("../../utils/api");
 const SHARE_TASK_POLL_INTERVAL_MS = 5000;
 const SHARE_TASK_MAX_WAIT_MS = 5 * 60 * 1000;
 
@@ -42,9 +42,15 @@ Page({
   data: {
     role: "wife",
     activeTab: "wife",
-    householdCode: "",
-    householdInput: "",
-    status: "等待家庭码",
+    authLoading: true,
+    userDisplayName: "微信用户",
+    householdId: "",
+    householdName: "",
+    householdRole: "member",
+    households: [],
+    newHouseholdName: "我的家庭",
+    inviteReady: false,
+    status: "正在微信登录",
     syncing: false,
     dateKey: todayKey(),
     meal: "dinner",
@@ -73,22 +79,21 @@ Page({
     this.photoImages = {};
     this.remoteSaveTimer = null;
     const savedHousehold = wx.getStorageSync(HOUSEHOLD_KEY) || {};
-    const sharedCode = normalizeHouseholdCode(options.code || "");
-    const savedCode = normalizeHouseholdCode(savedHousehold.code || "");
-    const initialCode = sharedCode || savedCode;
     const role = options.role === "husband" ? "husband" : "wife";
     const activeTab = normalizeTab(options.tab) || role;
     this.setData({
       role,
       activeTab,
-      householdCode: initialCode,
-      householdInput: initialCode,
-      status: initialCode ? `正在同步：${initialCode}` : "等待家庭码"
+      status: "正在微信登录"
     });
     this.refreshView();
-    if (initialCode) {
-      this.joinHouseholdByCode(initialCode, { silent: !sharedCode });
-    }
+    this.initializeAccount({
+      inviteToken: normalizeInviteToken(options.invite || ""),
+      savedHousehold
+    }).catch((error) => {
+      this.setData({ authLoading: false, syncing: false, status: "登录失败" });
+      showToast(error.message || "微信登录失败");
+    });
   },
 
   onShow() {
@@ -96,11 +101,14 @@ Page({
   },
 
   onPullDownRefresh() {
-    if (!this.data.householdCode) {
+    if (!this.data.householdId) {
       wx.stopPullDownRefresh();
       return;
     }
-    this.joinHouseholdByCode(this.data.householdCode, { silent: true }).finally(() => wx.stopPullDownRefresh());
+    this.enterHousehold(
+      { id: this.data.householdId, name: this.data.householdName, role: this.data.householdRole },
+      { silent: true }
+    ).finally(() => wx.stopPullDownRefresh());
   },
 
   enableShareMenu() {
@@ -114,7 +122,7 @@ Page({
 
   onShareAppMessage() {
     return {
-      title: "一起安排今天吃什么",
+      title: `加入${this.data.householdName || "我的家庭"}，一起安排今天吃什么`,
       path: `/pages/home/index?${this.shareQuery()}`
     };
   },
@@ -122,7 +130,7 @@ Page({
   onShareTimeline() {
     return {
       title: "老婆点菜老公做",
-      query: this.shareQuery({ includeHouseholdCode: false })
+      query: this.shareQuery({ includeInvite: false })
     };
   },
 
@@ -130,15 +138,15 @@ Page({
     const role = this.data.role === "husband" ? "husband" : "wife";
     const tab = normalizeTab(this.data.activeTab) || role;
     const params = [`role=${encodeURIComponent(role)}`, `tab=${encodeURIComponent(tab)}`];
-    if (options.includeHouseholdCode !== false && this.data.householdCode) {
-      params.push(`code=${encodeURIComponent(this.data.householdCode)}`);
+    if (options.includeInvite !== false && this.inviteToken) {
+      params.push(`invite=${encodeURIComponent(this.inviteToken)}`);
     }
     return params.join("&");
   },
 
-  loadLocalState() {
+  loadLocalState(storageKey = STORAGE_KEY) {
     try {
-      const saved = wx.getStorageSync(STORAGE_KEY);
+      const saved = wx.getStorageSync(storageKey);
       return normalizeAppState(compactStateForStorage(saved || createDefaultState()));
     } catch {
       return createDefaultState();
@@ -154,16 +162,17 @@ Page({
 
   saveLocalState(state) {
     const compacted = compactStateForStorage(state);
+    const storageKey = this.activeStateStorageKey || STORAGE_KEY;
     try {
-      wx.setStorageSync(STORAGE_KEY, compacted);
+      wx.setStorageSync(storageKey, compacted);
     } catch {
-      wx.removeStorageSync(STORAGE_KEY);
-      wx.setStorageSync(STORAGE_KEY, compactStateForStorage(compacted, { stripAllImages: true }));
+      wx.removeStorageSync(storageKey);
+      wx.setStorageSync(storageKey, compactStateForStorage(compacted, { stripAllImages: true }));
     }
   },
 
   queueRemoteSave() {
-    if (!this.data.householdCode) return;
+    if (!this.data.householdId) return;
     clearTimeout(this.remoteSaveTimer);
     this.remoteSaveTimer = setTimeout(() => {
       this.saveRemoteState().catch((error) => {
@@ -174,12 +183,12 @@ Page({
   },
 
   async saveRemoteState() {
-    if (!this.data.householdCode) return;
+    if (!this.data.householdId) return;
     await requestApi("/api/miniprogram-state", {
-      code: this.data.householdCode,
+      householdId: this.data.householdId,
       payload: compactStateForStorage(this.state, { stripLocalPhotoPaths: true })
     });
-    this.setData({ status: `在线同步：${this.data.householdCode}` });
+    this.setData({ status: `在线同步：${this.data.householdName}` });
   },
 
   refreshView() {
@@ -204,7 +213,7 @@ Page({
     this.setData({
       brandMark: activeTab === "husband" ? "厨" : activeTab === "menu" ? "菜" : "点",
       navTitle: activeTab === "husband" ? "老公厨房" : activeTab === "menu" ? "管理菜单" : "老婆点菜",
-      navSubtitle: this.data.householdCode ? this.data.status : "输入家庭码后进入专属菜单",
+      navSubtitle: this.data.householdId ? this.data.status : this.data.authLoading ? "正在验证微信身份" : "创建家庭或接受邀请后开始点菜",
       showWife: activeTab === "wife",
       showHusband: activeTab === "husband",
       showMenu: activeTab === "menu",
@@ -476,46 +485,147 @@ Page({
     };
   },
 
-  onHouseholdInput(event) {
-    this.setData({ householdInput: event.detail.value });
-  },
-
-  joinHousehold() {
-    this.joinHouseholdByCode(this.data.householdInput);
-  },
-
-  async joinHouseholdByCode(rawCode, options = {}) {
-    const code = String(rawCode || "").trim().toLowerCase();
-    if (!code) {
-      showToast("请输入家庭码");
-      return;
+  async initializeAccount({ inviteToken, savedHousehold }) {
+    this.setData({ authLoading: true, syncing: true, status: "正在微信登录" });
+    let account = wx.getStorageSync(AUTH_KEY) || null;
+    let payload = null;
+    if (account?.token) {
+      try {
+        payload = await requestApi("/api/households", { action: "list" });
+      } catch {
+        wx.removeStorageSync(AUTH_KEY);
+        account = null;
+      }
     }
-    this.setData({ syncing: true, status: "正在进入家庭菜单..." });
+    if (!account?.token) {
+      account = await loginWithWechat();
+      payload = await requestApi("/api/households", { action: "list" });
+    }
+
+    let households = Array.isArray(payload.households) ? payload.households : [];
+    let activeHousehold = null;
+    let useLegacyLocal = false;
+
+    if (inviteToken) {
+      const joined = await requestApi("/api/households", { action: "join", inviteToken });
+      activeHousehold = joined.household;
+      households = mergeHouseholdList(households, activeHousehold);
+      showToast(`已加入${activeHousehold.name}`, "success");
+    }
+
+    const savedId = String(savedHousehold?.id || savedHousehold?.householdId || "").trim();
+    if (!activeHousehold && savedId) activeHousehold = households.find((item) => item.id === savedId) || null;
+
+    const legacyCode = normalizeLegacyHouseholdCode(savedHousehold?.code || "");
+    if (!activeHousehold && legacyCode) {
+      try {
+        const claimed = await requestApi("/api/households", { action: "claimLegacy", code: legacyCode });
+        activeHousehold = claimed.household;
+        households = mergeHouseholdList(households, activeHousehold);
+        useLegacyLocal = true;
+      } catch (error) {
+        if (!/已完成迁移/.test(error.message || "")) throw error;
+      }
+    }
+
+    if (!activeHousehold && households.length === 1) activeHousehold = households[0];
+    this.setData({
+      authLoading: false,
+      syncing: false,
+      userDisplayName: payload.user?.displayName || account.user?.displayName || "微信用户",
+      households,
+      status: activeHousehold ? "正在同步家庭菜单" : "请选择或创建家庭"
+    });
+    if (activeHousehold) await this.enterHousehold(activeHousehold, { silent: true, useLegacyLocal });
+    else this.refreshView();
+  },
+
+  onHouseholdNameInput(event) {
+    this.setData({ newHouseholdName: event.detail.value });
+  },
+
+  async createHousehold() {
+    this.setData({ syncing: true });
     try {
-      const payload = await requestApi("/api/miniprogram-state", { code });
-      const nextState = payload.payload ? normalizeAppState(payload.payload) : createDefaultState();
+      const payload = await requestApi("/api/households", {
+        action: "create",
+        name: this.data.newHouseholdName
+      });
+      const households = mergeHouseholdList(this.data.households, payload.household);
+      this.setData({ households, syncing: false });
+      await this.enterHousehold(payload.household);
+    } catch (error) {
+      this.setData({ syncing: false });
+      showToast(error.message || "家庭创建失败");
+    }
+  },
+
+  selectHousehold(event) {
+    const household = this.data.households.find((item) => item.id === event.currentTarget.dataset.id);
+    if (household) this.enterHousehold(household);
+  },
+
+  async enterHousehold(household, options = {}) {
+    if (!household?.id) return;
+    this.setData({ syncing: true, status: "正在进入家庭菜单...", inviteReady: false });
+    try {
+      const payload = await requestApi("/api/miniprogram-state", { householdId: household.id });
+      const storageKey = `${STORAGE_KEY}:${household.id}`;
+      const scopedState = wx.getStorageSync(storageKey);
+      const nextState = payload.payload
+        ? normalizeAppState(payload.payload)
+        : options.useLegacyLocal
+          ? this.state
+          : scopedState
+            ? normalizeAppState(scopedState)
+            : createDefaultState();
+      this.activeStateStorageKey = storageKey;
       this.state = normalizeAppState(compactStateForStorage(nextState));
       this.saveLocalState(this.state);
-      wx.setStorageSync(HOUSEHOLD_KEY, { code, householdId: payload.householdId || "" });
+      wx.setStorageSync(HOUSEHOLD_KEY, { id: household.id, name: household.name, role: household.role });
       this.setData({
-        householdCode: code,
-        householdInput: code,
-        status: `在线同步：${code}`,
+        householdId: household.id,
+        householdName: household.name,
+        householdRole: household.role || "member",
+        status: `在线同步：${household.name}`,
         syncing: false
       });
       this.refreshView();
       if (!payload.payload) await this.saveRemoteState();
-      else this.queueRemoteSave();
-      if (!options.silent) showToast("已进入家庭菜单", "success");
+      this.prepareHouseholdInvite();
+      if (!options.silent) showToast(`已进入${household.name}`, "success");
     } catch (error) {
       this.setData({ syncing: false, status: "连接失败" });
       showToast(error.message || "连接失败");
     }
   },
 
+  async prepareHouseholdInvite() {
+    if (!this.data.householdId) return;
+    try {
+      const payload = await requestApi("/api/households", {
+        action: "invite",
+        householdId: this.data.householdId
+      });
+      this.inviteToken = payload.inviteToken || "";
+      this.setData({ inviteReady: Boolean(this.inviteToken) });
+    } catch {
+      this.inviteToken = "";
+      this.setData({ inviteReady: false });
+    }
+  },
+
   leaveHousehold() {
     wx.removeStorageSync(HOUSEHOLD_KEY);
-    this.setData({ householdCode: "", householdInput: "", status: "等待家庭码" });
+    this.activeStateStorageKey = null;
+    this.inviteToken = "";
+    this.setData({
+      householdId: "",
+      householdName: "",
+      householdRole: "member",
+      inviteReady: false,
+      status: "请选择或创建家庭"
+    });
     this.refreshView();
   },
 
@@ -1421,8 +1531,19 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function normalizeHouseholdCode(value) {
-  return String(value || "").trim().toLowerCase();
+function mergeHouseholdList(households, household) {
+  const list = Array.isArray(households) ? households.filter((item) => item.id !== household.id) : [];
+  return [household, ...list];
+}
+
+function normalizeInviteToken(value) {
+  const token = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{24,100}$/.test(token) ? token : "";
+}
+
+function normalizeLegacyHouseholdCode(value) {
+  const code = String(value || "").trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{0,79}$/i.test(code) ? code : "";
 }
 
 function normalizeTab(value) {

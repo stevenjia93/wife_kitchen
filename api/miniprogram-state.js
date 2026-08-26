@@ -1,13 +1,13 @@
 const MAX_BODY_CHARS = 5_000_000;
-const MAX_CODE_LENGTH = 80;
 const defaultDatabase = require("../server/database");
+const defaultAuth = require("../server/auth");
 
-function createHandler(database = defaultDatabase) {
+function createHandler(database = defaultDatabase, auth = defaultAuth) {
   return async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   if (req.method === "OPTIONS") {
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.status(204).end();
     return;
   }
@@ -19,13 +19,15 @@ function createHandler(database = defaultDatabase) {
 
   try {
     const body = await readJsonBody(req);
-    const code = normalizeHouseholdCode(body.code);
+    const user = await auth.requireUser(req, database);
+    const householdId = normalizeHouseholdId(body.householdId);
+    const membership = await database.findHouseholdMembership(user.id, householdId);
+    if (!membership) throw httpError("你不是这个家庭的成员", 403);
     const payload = body.payload && typeof body.payload === "object" ? body.payload : null;
-    const householdId = await database.findOrCreateHousehold(code);
 
     if (payload) {
       const updatedAt = await database.saveHouseholdState(householdId, compactPayloadForStorage(payload));
-      res.status(200).json({ householdId, saved: true, updatedAt: toIsoString(updatedAt) });
+      res.status(200).json({ householdId, saved: true, updatedAt: toIsoString(updatedAt), role: membership.role });
       return;
     }
 
@@ -38,6 +40,8 @@ function createHandler(database = defaultDatabase) {
     }
     res.status(200).json({
       householdId,
+      householdName: membership.name,
+      role: membership.role,
       payload: hasPayload(compactPayload) ? compactPayload : null,
       isNew: !hasPayload(remotePayload),
       updatedAt: toIsoString(updatedAt)
@@ -51,14 +55,12 @@ function createHandler(database = defaultDatabase) {
   };
 }
 
-function normalizeHouseholdCode(value) {
-  const code = String(value || "").trim().toLowerCase();
-  if (!code) throw httpError("请输入家庭码", 400);
-  if (code.length > MAX_CODE_LENGTH) throw httpError("家庭码太长", 400);
-  if (!/^[a-z0-9][a-z0-9_-]*$/i.test(code)) {
-    throw httpError("家庭码只能包含字母、数字、横线和下划线", 400);
+function normalizeHouseholdId(value) {
+  const id = String(value || "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw httpError("家庭编号不正确", 400);
   }
-  return code;
+  return id;
 }
 
 function hasPayload(payload) {
@@ -201,5 +203,5 @@ module.exports = createHandler();
 module.exports.createHandler = createHandler;
 module.exports._internals = {
   compactPayloadForStorage,
-  normalizeHouseholdCode
+  normalizeHouseholdId
 };
