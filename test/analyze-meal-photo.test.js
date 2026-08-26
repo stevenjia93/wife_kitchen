@@ -163,7 +163,15 @@ test("分享图提示词禁止模型渲染不可靠的文字和数字", () => {
   const prompt = buildShareImagePrompt({ totalCalories: 500, items: [] });
   assert.match(prompt, /不要生成任何文字、数字/);
   assert.match(prompt, /保留原始食物/);
-  assert.match(buildShareOverlaySvg({ totalCalories: 500, items: [] }), /约 500 kcal/);
+  assert.match(prompt, /不要制作顶部或底部的大色块、大白卡、信息面板/);
+  const overlay = buildShareOverlaySvg({
+    totalCalories: 500,
+    items: [{ label: "番茄炒蛋", calories: 500, bbox: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 } }]
+  });
+  assert.match(overlay, /约 500 kcal/);
+  assert.match(overlay, /class="meal-bubble"/);
+  assert.match(overlay, /class="doodle-arrow"/);
+  assert.doesNotMatch(overlay, /width="940" height="326"/);
 });
 
 test("服务端会把上传图片统一转换为标准 JPEG", async () => {

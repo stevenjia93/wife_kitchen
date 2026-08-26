@@ -224,16 +224,17 @@ function buildShareImagePrompt(analysis) {
     .join("\n");
 
   return `
-把这张餐桌照片编辑成竖版 4:5、可以发小红书的精致美食记录底图。保留原始食物、餐具和主要构图，不要替换菜品，不要新增不存在的食物，不要把照片变成插画。
+把这张餐桌照片编辑成竖版 4:5、可以发小红书的美食热量记录底图。保留原始食物、餐具、桌面和主要构图，不要替换菜品，不要新增不存在的食物，不要把照片变成插画。
 
 视觉要求：
-1. 提升自然光、食物色泽和层次，使用奶油白、鼠尾草绿和少量暖橙色，保持真实摄影质感。
+1. 轻微提升自然光、食物色泽和层次，保持真实照片质感，不要过度磨皮或改变食物外观。
 2. 不要使用矩形检测框、边界框、UI 样式框或机器视觉风格。
-3. 用轻盈的白色手绘线沿盘子、碗和主要食物外轮廓做少量不规则圈线，搭配小爱心、星星和波浪线。
-4. 上方和下方各保留一块干净、对比度稳定的留白区域，后续由程序写入标题和精确热量信息。
-5. 图中不要生成任何文字、数字、单位、二维码、水印或品牌标志，避免错误信息。
-6. 不要遮挡食物主体，不要改变食物数量、种类或份量。
-7. 整体像生活方式博主精修过的真实美食照片，干净、温暖、克制。
+3. 用白色 Apple Pencil 手绘感线条，沿盘子、碗和主要食物的真实外轮廓做不规则圈线；可以有一条虚线或重复描边，线条要松弛自然。
+4. 在桌面空白处点缀少量手绘爱心、四角星、波浪线和小箭头，像生活方式博主直接在照片上做的随手笔记。
+5. 保持整张照片通透完整，不要制作顶部或底部的大色块、大白卡、信息面板，也不要为了排版制造正式留白区。
+6. 图中不要生成任何文字、数字、单位、二维码、水印或品牌标志；准确文字稍后由程序叠加。
+7. 手绘线和装饰不要遮挡食物主体，不要改变食物数量、种类或份量。
+8. 整体要温暖、有生活气、轻盈俏皮，像好看的小红书美食手账，而不是营养报告或商业海报。
 
 画面内容参考（仅用于构图，不得渲染成文字）：总计约 ${analysis.totalCalories} kcal；${itemLines || "一份家庭餐"}。
 `.trim();
@@ -260,38 +261,65 @@ async function composeShareCard(imageBuffer, analysis) {
 
 function buildShareOverlaySvg(analysis) {
   const items = (analysis.items || []).slice(0, 6);
-  const rows = items
+  const bubbles = items
     .map((item, index) => {
-      const column = index % 2;
-      const row = Math.floor(index / 2);
-      const x = 78 + column * 455;
-      const y = 982 + row * 64;
-      const color = column ? "#E9A95B" : "#6C8B76";
-      return `<circle cx="${x}" cy="${y - 7}" r="13" fill="${color}"/><text x="${x}" y="${y - 1}" class="marker">${index + 1}</text><text x="${x + 26}" y="${y}" class="item">${escapeXml(item.label)} · ${item.calories} kcal</text>`;
-    })
-    .join("");
-  const markers = items
-    .map((item, index) => {
-      const centerX = clampInt((item.bbox.x + item.bbox.width / 2) * SHARE_IMAGE_WIDTH, 34, SHARE_IMAGE_WIDTH - 34);
-      const centerY = clampInt((item.bbox.y + item.bbox.height / 2) * SHARE_IMAGE_HEIGHT, 250, 880);
-      return `<circle cx="${centerX}" cy="${centerY}" r="23" fill="#FFFFFF" fill-opacity="0.92" stroke="#6C8B76" stroke-width="4"/><text x="${centerX}" y="${centerY + 8}" class="photo-marker">${index + 1}</text>`;
+      const box = normalizeBox(item.bbox);
+      const targetX = clampInt((box.x + box.width / 2) * SHARE_IMAGE_WIDTH, 60, SHARE_IMAGE_WIDTH - 60);
+      const targetY = clampInt(
+        (box.y + Math.min(box.height * 0.34, 0.2)) * SHARE_IMAGE_HEIGHT,
+        300,
+        SHARE_IMAGE_HEIGHT - 100
+      );
+      const bubbleWidth = clampInt(250 + cleanText(item.label).length * 22, 350, 470);
+      const bubbleCenterX = clampInt(targetX, bubbleWidth / 2 + 38, SHARE_IMAGE_WIDTH - bubbleWidth / 2 - 38);
+      const bubbleCenterY = clampInt(
+        (box.y + Math.min(box.height * 0.18, 0.06)) * SHARE_IMAGE_HEIGHT,
+        220,
+        SHARE_IMAGE_HEIGHT - 170
+      );
+      const x = bubbleCenterX - bubbleWidth / 2;
+      const y = bubbleCenterY - 47;
+      const rotation = [-2, 1.5, -1, 2, -1.5, 1][index];
+      const color = index % 2 ? "#FFE1A6" : "#DDF0DF";
+      const label = escapeXml(item.label);
+      return `
+        <path class="doodle-arrow" d="M ${bubbleCenterX + 8} ${y + 91} C ${bubbleCenterX + 28} ${y + 126}, ${targetX - 34} ${targetY - 38}, ${targetX} ${targetY}" marker-end="url(#arrowhead)"/>
+        <g class="meal-bubble" transform="rotate(${rotation} ${bubbleCenterX} ${bubbleCenterY})">
+          <path d="M ${x + 26} ${y + 3} Q ${x + bubbleWidth * 0.48} ${y - 4} ${x + bubbleWidth - 22} ${y + 4} Q ${x + bubbleWidth + 5} ${y + 28} ${x + bubbleWidth - 2} ${y + 68} Q ${x + bubbleWidth - 14} ${y + 96} ${x + 32} ${y + 92} Q ${x - 5} ${y + 84} ${x + 2} ${y + 26} Q ${x + 8} ${y + 8} ${x + 26} ${y + 3} Z"/>
+          <text x="${bubbleCenterX}" y="${bubbleCenterY - 3}" class="item-label">${label}</text>
+          <text x="${bubbleCenterX}" y="${bubbleCenterY + 30}" class="item-kcal" fill="${color}">约 ${item.calories} kcal</text>
+        </g>`;
     })
     .join("");
 
   return `<svg width="${SHARE_IMAGE_WIDTH}" height="${SHARE_IMAGE_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="ink-shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#101510" flood-opacity="0.62"/></filter>
+      <filter id="bubble-shadow" x="-20%" y="-30%" width="140%" height="170%"><feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#101510" flood-opacity="0.32"/></filter>
+      <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#FFFFFF"/></marker>
+    </defs>
     <style>
-      .title,.total,.item,.note,.marker,.photo-marker{font-family:'Noto Sans CJK SC','Source Han Sans SC','Microsoft YaHei',sans-serif}
-      .title{font-size:48px;font-weight:700;fill:#182019}.total{font-size:66px;font-weight:800;fill:#182019}
-      .item{font-size:28px;font-weight:600;fill:#27322A}.note{font-size:23px;font-weight:400;fill:#556159}
-      .marker{font-size:18px;font-weight:800;fill:#FFFFFF;text-anchor:middle}.photo-marker{font-size:28px;font-weight:800;fill:#476351;text-anchor:middle}
+      .title,.total,.item-label,.item-kcal,.note{font-family:'Noto Sans CJK SC','Source Han Sans SC','Microsoft YaHei',sans-serif}
+      .title,.total{paint-order:stroke;stroke:#172019;stroke-opacity:0.72;stroke-width:8px;stroke-linejoin:round;filter:url(#ink-shadow)}
+      .title{font-size:46px;font-weight:800;fill:#FFFDF7;letter-spacing:2px}.total{font-size:56px;font-weight:900;fill:#FFE4A8}
+      .meal-bubble{filter:url(#bubble-shadow)}.meal-bubble path{fill:#1E2620;fill-opacity:0.70;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round}
+      .item-label,.item-kcal{text-anchor:middle;paint-order:stroke;stroke:#1E2620;stroke-width:2px;stroke-linejoin:round}
+      .item-label{font-size:29px;font-weight:800;fill:#FFFFFF}.item-kcal{font-size:24px;font-weight:800}
+      .doodle-arrow{fill:none;stroke:#FFFFFF;stroke-width:5px;stroke-linecap:round;stroke-dasharray:11 9;filter:url(#ink-shadow)}
+      .note{font-size:22px;font-weight:600;fill:#FFFDF7;paint-order:stroke;stroke:#172019;stroke-opacity:0.72;stroke-width:6px;stroke-linejoin:round}
     </style>
-    <rect x="42" y="38" width="940" height="188" rx="38" fill="#FFFDF8" fill-opacity="0.90"/>
-    <text x="78" y="105" class="title">今日份美食记录</text>
-    <text x="78" y="184" class="total">约 ${analysis.totalCalories} kcal</text>
-    ${markers}
-    <rect x="42" y="914" width="940" height="326" rx="42" fill="#FFFDF8" fill-opacity="0.93"/>
-    ${rows}
-    <text x="78" y="1200" class="note">AI 视觉估算，仅供日常记录参考</text>
+    <g transform="rotate(-2 66 95)">
+      <text x="58" y="86" class="title">今日份美食记录</text>
+      <text x="60" y="151" class="total">约 ${analysis.totalCalories} kcal</text>
+      <path d="M 64 165 Q 210 184 382 164" fill="none" stroke="#FFFDF7" stroke-width="5" stroke-linecap="round" stroke-dasharray="15 10" filter="url(#ink-shadow)"/>
+    </g>
+    ${bubbles}
+    <g fill="none" stroke="#FFFDF7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#ink-shadow)">
+      <path d="M 914 87 C 893 60 856 86 914 132 C 972 86 935 60 914 87 Z"/>
+      <path d="M 76 1124 l 11 25 27 2-21 17 6 27-23-15-23 15 6-27-21-17 27-2z"/>
+      <path d="M 808 1188 q 18-22 36 0 t 36 0 t 36 0"/>
+    </g>
+    <text x="970" y="1240" class="note" text-anchor="end">仅按照片粗估</text>
   </svg>`;
 }
 
