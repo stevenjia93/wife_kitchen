@@ -299,14 +299,13 @@ function buildShareOverlaySvg(analysis) {
       <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#FFFFFF"/></marker>
     </defs>
     <style>
-      .title,.total,.item-label,.item-kcal,.note{font-family:'Noto Sans CJK SC','Source Han Sans SC','Microsoft YaHei',sans-serif}
+      .title,.total,.item-label,.item-kcal{font-family:'LXGW WenKai Lite','LXGW WenKai','Kaiti SC','STKaiti','KaiTi',serif;font-weight:600}
       .title,.total{paint-order:stroke;stroke:#172019;stroke-opacity:0.72;stroke-width:8px;stroke-linejoin:round;filter:url(#ink-shadow)}
-      .title{font-size:46px;font-weight:800;fill:#FFFDF7;letter-spacing:2px}.total{font-size:56px;font-weight:900;fill:#FFE4A8}
+      .title{font-size:48px;fill:#FFFDF7;letter-spacing:3px}.total{font-size:56px;fill:#FFE4A8;letter-spacing:1px}
       .meal-bubble{filter:url(#bubble-shadow)}.meal-bubble path{fill:#1E2620;fill-opacity:0.70;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round}
       .item-label,.item-kcal{text-anchor:middle;paint-order:stroke;stroke:#1E2620;stroke-width:2px;stroke-linejoin:round}
-      .item-label{font-size:29px;font-weight:800;fill:#FFFFFF}.item-kcal{font-size:24px;font-weight:800}
+      .item-label{font-size:31px;fill:#FFFFFF}.item-kcal{font-size:25px}
       .doodle-arrow{fill:none;stroke:#FFFFFF;stroke-width:5px;stroke-linecap:round;stroke-dasharray:11 9;filter:url(#ink-shadow)}
-      .note{font-size:22px;font-weight:600;fill:#FFFDF7;paint-order:stroke;stroke:#172019;stroke-opacity:0.72;stroke-width:6px;stroke-linejoin:round}
     </style>
     <g transform="rotate(-2 66 95)">
       <text x="58" y="86" class="title">今日份美食记录</text>
@@ -319,7 +318,6 @@ function buildShareOverlaySvg(analysis) {
       <path d="M 76 1124 l 11 25 27 2-21 17 6 27-23-15-23 15 6-27-21-17 27-2z"/>
       <path d="M 808 1188 q 18-22 36 0 t 36 0 t 36 0"/>
     </g>
-    <text x="970" y="1240" class="note" text-anchor="end">仅按照片粗估</text>
   </svg>`;
 }
 

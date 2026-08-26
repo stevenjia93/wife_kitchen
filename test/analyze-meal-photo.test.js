@@ -171,7 +171,9 @@ test("分享图提示词禁止模型渲染不可靠的文字和数字", () => {
   assert.match(overlay, /约 500 kcal/);
   assert.match(overlay, /class="meal-bubble"/);
   assert.match(overlay, /class="doodle-arrow"/);
+  assert.match(overlay, /LXGW WenKai Lite/);
   assert.doesNotMatch(overlay, /width="940" height="326"/);
+  assert.doesNotMatch(overlay, /仅按照片粗估/);
 });
 
 test("服务端会把上传图片统一转换为标准 JPEG", async () => {
