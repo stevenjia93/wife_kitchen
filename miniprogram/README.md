@@ -8,7 +8,7 @@
 - 生产后端为阿里云中国内地 ECS 上的 Express。
 - 菜单数据保存到阿里云 RDS PostgreSQL。
 - 不再依赖 Supabase Edge Function、Supabase 客户端或 Vercel。
-- OpenAI 只用于可选的照片热量分析和分享图，不影响家庭菜单核心流程。
+- 阿里云百炼的千问 VL 和图像生成模型用于照片热量分析及分享图生成，图片请求不再发往境外 OpenAI 接口。
 
 完成备案和 HTTPS 后，在 `app.js` 中填写唯一的生产 API 域名：
 

@@ -40,10 +40,11 @@ DATABASE_URL=postgresql://... npm start
 
 ## AI 热量识别配置
 
-热量识别和手绘分享图由 Express API 调用 OpenAI，是不影响点菜流程的可选功能。启用时需要在阿里云服务器环境变量里配置：
+热量识别和小红书风格分享图由 Express API 调用阿里云百炼华北2（北京）模型。千问 VL 负责照片分析，Qwen-Image 通过异步任务完成图生图，服务端再叠加精确热量文字。启用时需要在阿里云服务器环境变量里配置：
 
 ```text
-OPENAI_API_KEY=...
-OPENAI_VISION_MODEL=gpt-5.4-mini
-OPENAI_IMAGE_MODEL=gpt-image-2
+DASHSCOPE_API_KEY=...
+DASHSCOPE_VISION_MODEL=qwen3-vl-plus
+DASHSCOPE_IMAGE_MODEL=qwen-image-3.0-pro
+DASHSCOPE_IMAGE_SIZE=1024*1280
 ```

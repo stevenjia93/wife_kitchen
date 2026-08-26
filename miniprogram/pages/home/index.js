@@ -1,5 +1,7 @@
 const stateUtils = require("../../utils/state");
 const { requestApi, showToast, requirePrivacyAuthorization } = require("../../utils/api");
+const SHARE_TASK_POLL_INTERVAL_MS = 5000;
+const SHARE_TASK_MAX_WAIT_MS = 5 * 60 * 1000;
 
 const {
   STORAGE_KEY,
@@ -1062,7 +1064,7 @@ Page({
       wx.showModal({
         title: "AI 照片处理说明",
         content:
-          "你选择的餐桌照片将发送至开发者服务器，并由 OpenAI 提供菜品识别、热量估算和分享图生成服务。照片可能在境外处理，服务商可能为安全监测保留最多 30 天。请避免上传人物面部或其他无关个人信息。",
+          "你选择的餐桌照片将发送至开发者部署在中国内地的服务器，并由阿里云百炼的千问和图像生成模型完成菜品识别、热量估算及分享图生成。原始照片不会保存到家庭菜单数据库。请避免上传人物面部或其他无关个人信息。",
         confirmText,
         cancelText: "暂不使用",
         success: (result) => resolve(Boolean(result.confirm)),
@@ -1094,7 +1096,7 @@ Page({
     const targetNames = options.targetNames || (photo.targetKeys || []).map((key) => photoTargetName(key, targets)).filter(Boolean);
     this.patchPhoto(photoId, { shareStatus: "loading", shareError: "", shareStartedAt: new Date().toISOString() });
     try {
-      const sharePayload = await requestApi(
+      let sharePayload = await requestApi(
         "/api/analyze-meal-photo",
         {
           image,
@@ -1102,8 +1104,25 @@ Page({
           includeShareImage: true,
           analysis
         },
-        { timeout: 180000 }
+        { timeout: 30000 }
       );
+      const deadline = Date.now() + SHARE_TASK_MAX_WAIT_MS;
+      while (!sharePayload.shareImage && sharePayload.shareTaskId) {
+        if (!["PENDING", "RUNNING"].includes(sharePayload.shareStatus)) {
+          throw new Error("分享图生成失败");
+        }
+        if (Date.now() >= deadline) throw new Error("分享图生成时间较长，请稍后重试");
+        await wait(SHARE_TASK_POLL_INTERVAL_MS);
+        sharePayload = await requestApi(
+          "/api/analyze-meal-photo",
+          {
+            includeShareImage: true,
+            analysis,
+            shareTaskId: sharePayload.shareTaskId
+          },
+          { timeout: 30000 }
+        );
+      }
       this.patchPhoto(photoId, {
         shareImage: sharePayload.shareImage || "",
         shareStatus: sharePayload.shareImage ? "done" : "failed",
@@ -1396,6 +1415,10 @@ function normalizeStepItem(step) {
 
 function stepImageSrc(step) {
   return imageSrcFromRaw((step && (step.imageUrl || step.image)) || "");
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function normalizeHouseholdCode(value) {
