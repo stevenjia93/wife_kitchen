@@ -4,6 +4,7 @@ const SHARE_TASK_POLL_INTERVAL_MS = 5000;
 const SHARE_TASK_MAX_WAIT_MS = 5 * 60 * 1000;
 const MAX_RECIPE_STEPS = 32;
 const MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS = 3;
+const mealShortLabels = { breakfast: "早", lunch: "午", dinner: "晚" };
 
 const {
   STORAGE_KEY,
@@ -63,6 +64,7 @@ Page({
     menuMealFilter: "all",
     wishName: "",
     featuredIndex: 0,
+    mealSettingsOpen: false,
     menuOpen: false,
     recipeInput: "",
     recipeLoading: false,
@@ -271,6 +273,7 @@ Page({
       preferredMealOptions: mealOrder.map((meal) => ({
         key: meal,
         label: mealLabels[meal],
+        shortLabel: mealShortLabels[meal],
         selected: preferredMeals.includes(meal)
       })),
       menuMealFilterOptions: [
@@ -529,6 +532,7 @@ Page({
       mealOptions: mealOrder.map((meal) => ({
         key: meal,
         label: mealLabels[meal],
+        shortLabel: mealShortLabels[meal],
         selected: meals.includes(meal)
       })),
       guideLabel: recipeGuideLabel(dish.guideSource),
@@ -765,7 +769,10 @@ Page({
   switchTab(event) {
     const tab = event.currentTarget.dataset.tab || "wife";
     const role = tab === "husband" ? "husband" : tab === "wife" ? "wife" : this.data.role;
-    this.setData({ activeTab: tab, role, menuOpen: false, detailOpen: false }, () => this.refreshView());
+    this.setData(
+      { activeTab: tab, role, mealSettingsOpen: false, menuOpen: false, detailOpen: false },
+      () => this.refreshView()
+    );
   },
 
   shiftDate(event) {
@@ -781,6 +788,14 @@ Page({
 
   selectMeal(event) {
     this.setData({ meal: event.currentTarget.dataset.meal || "dinner", featuredIndex: 0 }, () => this.refreshView());
+  },
+
+  openMealSettings() {
+    this.setData({ mealSettingsOpen: true });
+  },
+
+  closeMealSettings() {
+    this.setData({ mealSettingsOpen: false });
   },
 
   togglePreferredMeal(event) {

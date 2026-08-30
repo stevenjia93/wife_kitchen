@@ -7,6 +7,7 @@
         <view class="title">{{navTitle}}</view>
         <view class="subtitle">{{navSubtitle}}</view>
       </view>
+      <button wx:if="{{showWife && householdId}}" class="topbar-settings" bindtap="openMealSettings">设置</button>
     </view>
   </view>
 
@@ -94,21 +95,6 @@
 
       <block wx:else>
       <view class="panel pick-panel">
-        <view class="meal-preference-row">
-          <view class="meal-preference-copy">
-            <view class="mini-label">常用餐次</view>
-            <view class="subtitle">只展示勾选餐次，下单时自动跳过其他空餐次</view>
-          </view>
-          <view class="meal-choice-row">
-            <button
-              wx:for="{{preferredMealOptions}}"
-              wx:key="key"
-              class="meal-choice {{item.selected ? 'selected' : ''}}"
-              data-meal="{{item.key}}"
-              bindtap="togglePreferredMeal"
-            >{{item.label}}</button>
-          </view>
-        </view>
         <view class="meal-tabs">
           <button
             wx:for="{{mealTabs}}"
@@ -411,6 +397,29 @@
       </button>
     </view>
 
+    <view wx:if="{{mealSettingsOpen}}" class="settings-mask" bindtap="closeMealSettings">
+      <view class="meal-settings-card" catchtap="noop">
+        <view class="meal-settings-head">
+          <view>
+            <view class="section-title">默认餐次</view>
+            <view class="subtitle">每天只显示勾选的餐次</view>
+          </view>
+          <button class="sheet-close" bindtap="closeMealSettings">×</button>
+        </view>
+        <view class="meal-settings-options">
+          <button
+            wx:for="{{preferredMealOptions}}"
+            wx:key="key"
+            class="meal-square setting-square {{item.selected ? 'selected' : ''}}"
+            data-meal="{{item.key}}"
+            bindtap="togglePreferredMeal"
+          >{{item.shortLabel}}</button>
+        </view>
+        <view class="meal-settings-hint">未勾选的空餐次，会在确认下单时自动跳过。</view>
+        <button class="button dark meal-settings-done" bindtap="closeMealSettings">完成</button>
+      </view>
+    </view>
+
     <view wx:if="{{menuOpen}}" class="menu-mask" bindtap="closeMenuSheet">
       <view class="menu-sheet" catchtap="noop">
         <view class="menu-sheet-head">
@@ -464,25 +473,18 @@
                 <view class="detail-name">{{detailDish.name}}</view>
                 <view class="subtitle">{{detailDish.meta}}</view>
               </view>
-              <view class="pill">{{detailDish.category}}</view>
-            </view>
-            <view class="detail-note">{{detailDish.note}}</view>
-
-            <view wx:if="{{detailDish.canEditMeals}}" class="detail-section detail-meal-editor">
-              <view>
-                <view class="mini-label">适合餐次</view>
-                <view class="subtitle">可多选，仅用于点菜时筛选</view>
-              </view>
-              <view class="detail-meal-options">
+              <view wx:if="{{detailDish.canEditMeals}}" class="detail-meal-inline">
                 <button
                   wx:for="{{detailDish.mealOptions}}"
                   wx:key="key"
-                  class="meal-choice {{item.selected ? 'selected' : ''}}"
+                  class="meal-square {{item.selected ? 'selected' : ''}}"
                   data-meal="{{item.key}}"
                   bindtap="toggleDishMeal"
-                >{{item.label}}</button>
+                >{{item.shortLabel}}</button>
               </view>
+              <view class="pill">{{detailDish.category}}</view>
             </view>
+            <view class="detail-note">{{detailDish.note}}</view>
 
             <view class="detail-section">
               <view class="mini-label">原料</view>

@@ -29,3 +29,17 @@ test("menu management keeps image, copy and delete action in one row without a s
   assert.match(styles, /\.managed-ingredients \{[\s\S]*white-space: nowrap/);
   assert.match(styles, /\.delete-menu-btn \{[\s\S]*width: 56rpx[\s\S]*height: 56rpx/);
 });
+
+test("meal defaults stay behind settings and dish meal tags use fixed square controls", () => {
+  const source = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.js"), "utf8");
+  const template = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxml"), "utf8");
+  const styles = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxss"), "utf8");
+
+  assert.match(template, /class="topbar-settings"[^>]*bindtap="openMealSettings"/);
+  assert.match(template, /wx:if="\{\{mealSettingsOpen\}\}" class="settings-mask"/);
+  assert.match(template, /class="detail-meal-inline"/);
+  assert.match(template, /\{\{item\.shortLabel\}\}/);
+  assert.doesNotMatch(template, /meal-preference-row|适合餐次|可多选，仅用于点菜时筛选/);
+  assert.match(source, /openMealSettings\(\) \{\s*this\.setData\(\{ mealSettingsOpen: true \}\)/);
+  assert.match(styles, /\.meal-square \{[\s\S]*width: 52rpx[\s\S]*max-width: 52rpx[\s\S]*height: 52rpx/);
+});
