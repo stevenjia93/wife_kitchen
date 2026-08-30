@@ -42,136 +42,77 @@ const ingredientAliases = [
 const starterDishes = [
   {
     id: "tomato-eggs",
-    name: "番茄炒蛋",
+    name: "西红柿炒鸡蛋",
     category: "快手菜",
     meals: ["lunch", "dinner"],
     time: 15,
     difficulty: "轻松",
     rating: 5,
-    image:
-      "https://images.unsplash.com/photo-1589927986089-35812388d1f4?auto=format&fit=crop&w=900&q=80",
+    image: "https://i2.chuimg.com/cbf28b18d47a4c378ad7c702dc9da6f8_1280w_956h.jpg?imageView2/1/w/800/h/600/q/75/format/jpg",
+    sourceUrl: "https://www.xiachufang.com/recipe/106488658/",
+    guideSource: "source",
     ingredients: [
-      { name: "番茄", amount: 2, unit: "个", group: "蔬菜" },
+      { name: "西红柿", amount: 2, unit: "个", group: "蔬菜" },
       { name: "鸡蛋", amount: 3, unit: "个", group: "蛋奶" },
       { name: "小葱", amount: 1, unit: "根", group: "蔬菜" },
-      { name: "生抽", amount: 1, unit: "勺", group: "调味" }
+      { name: "蒜", amount: 1, unit: "瓣", group: "蔬菜" },
+      { name: "盐", amount: null, unit: "", amountText: "适量", group: "调味" },
+      { name: "糖", amount: null, unit: "", amountText: "适量", group: "调味" }
     ],
-    steps: ["番茄切块，鸡蛋打散。", "先炒鸡蛋盛出，再炒番茄出汁。", "回锅合炒，少量生抽调味。"],
-    note: "拌饭友好，适合工作日。"
+    stepDetails: [
+      { text: "准备好所需材料。", imageUrl: "https://i2.chuimg.com/db7f32e056764ea9af7b1a0a94162b7f_1280w_959h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "在西红柿顶部划两刀，放入开水中烫一分钟便可去皮。", imageUrl: "https://i2.chuimg.com/5f472a67c1c1476d8f044825af15625b_1280w_959h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "切成滚刀块。", imageUrl: "https://i2.chuimg.com/4e844db392b04a3e98dc112be187a807_1280w_960h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "准备好葱花和蒜末。", imageUrl: "https://i2.chuimg.com/66cc58570bc84c2fad626d919f005dfd_1280w_960h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "鸡蛋磕入碗中，加少许盐，打散。", imageUrl: "https://i2.chuimg.com/e4668f47c0a240b499788ca3fed485a6_1280w_960h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "锅烧热，倒油，油要适当多一些。", imageUrl: "https://i2.chuimg.com/96ca86bfeaa341988e3a6d4fffa10e9f_1280w_960h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "油热后关小火，倒入蛋液；蛋液尚未完全凝固时关火，保持滑嫩。", imageUrl: "https://i2.chuimg.com/8f1ec0f2721d49c2bef4ad4b99b8495d_1280w_959h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "用筷子把鸡蛋划散。", imageUrl: "https://i2.chuimg.com/dbe261c5c693497096d02dda681cb3d6_1280w_959h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "鸡蛋炒好后盛出，避免继续受热变老。", imageUrl: "https://i2.chuimg.com/587bf4fc00bd474ca9f374cef9ec2a85_1280w_960h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "倒入少许底油，关小火爆香蒜末。", imageUrl: "https://i2.chuimg.com/4ecea43399f4402cbdac6951c8216c03_1280w_960h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "倒入西红柿块，用中火翻炒出汤汁。", imageUrl: "https://i2.chuimg.com/5ac7a28fe942453b901c5cb0c24258cb_1280w_960h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "炒出汤汁后，加入适量盐和白糖调味。", imageUrl: "https://i2.chuimg.com/502aa41d7ceb4023880ce96c921727dd_1280w_960h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "倒回鸡蛋，快速翻炒均匀。", imageUrl: "https://i2.chuimg.com/d025185f892240c5a7665640e5109506_1280w_960h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "若汁水过多，可以勾少量芡汁。", imageUrl: "https://i2.chuimg.com/324f092359144825a4ea85505a4225d7_1280w_959h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "出锅装盘，撒上葱花点缀。", imageUrl: "https://i2.chuimg.com/c791bdc1b6974f95a03484da8a953e5b_1280w_959h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "趁热享用。", imageUrl: "https://i2.chuimg.com/374d32860b23458db9ec80deb910ffe6_1280w_959h.jpg?imageView2/2/w/800/interlace/1/q/75" }
+    ],
+    note: "嫩滑多汁的经典家常菜。"
   },
   {
-    id: "cola-wings",
-    name: "可乐鸡翅",
+    id: "kung-pao-chicken",
+    name: "宫保鸡丁",
     category: "肉菜",
     meals: ["lunch", "dinner"],
-    time: 35,
+    time: 30,
     difficulty: "稳妥",
     rating: 5,
-    image:
-      "https://images.unsplash.com/photo-1562967916-eb82221dfb92?auto=format&fit=crop&w=900&q=80",
+    image: "https://i2.chuimg.com/83eec955461c462883bec1c1ecdd7f50_1080w_1920h.jpg?imageView2/1/w/800/h/600/q/75/format/jpg",
+    sourceUrl: "https://www.xiachufang.com/recipe/103709416/",
+    guideSource: "source",
     ingredients: [
-      { name: "鸡翅中", amount: 10, unit: "个", group: "肉蛋" },
-      { name: "可乐", amount: 1, unit: "罐", group: "饮品" },
-      { name: "姜", amount: 4, unit: "片", group: "蔬菜" },
-      { name: "生抽", amount: 2, unit: "勺", group: "调味" }
+      { name: "鸡腿肉", amount: 1, unit: "个", group: "肉蛋" },
+      { name: "熟花生米", amount: 60, unit: "克", group: "干货" },
+      { name: "姜", amount: 15, unit: "克", group: "蔬菜" },
+      { name: "蒜", amount: 15, unit: "克", group: "蔬菜" },
+      { name: "干辣椒", amount: 10, unit: "克", group: "调味" },
+      { name: "花椒", amount: 3, unit: "克", group: "调味" },
+      { name: "大葱", amount: 0.5, unit: "根", group: "蔬菜" },
+      { name: "生抽", amount: 20, unit: "克", group: "调味" },
+      { name: "料酒", amount: 15, unit: "克", group: "调味" },
+      { name: "醋", amount: 30, unit: "克", group: "调味" },
+      { name: "糖", amount: 21, unit: "克", group: "调味" },
+      { name: "淀粉", amount: 10, unit: "克", group: "调味" }
     ],
-    steps: ["鸡翅划刀焯水。", "煎到两面微黄后加姜片。", "倒入可乐和生抽，小火收汁。"],
-    note: "甜口，适合配清淡蔬菜。"
-  },
-  {
-    id: "garlic-broccoli",
-    name: "蒜蓉西兰花",
-    category: "蔬菜",
-    meals: ["lunch", "dinner"],
-    time: 12,
-    difficulty: "轻松",
-    rating: 4,
-    image:
-      "https://images.unsplash.com/photo-1584270354949-c26b0d5b4a0c?auto=format&fit=crop&w=900&q=80",
-    ingredients: [
-      { name: "西兰花", amount: 1, unit: "颗", group: "蔬菜" },
-      { name: "蒜", amount: 4, unit: "瓣", group: "蔬菜" },
-      { name: "蚝油", amount: 1, unit: "勺", group: "调味" },
-      { name: "盐", amount: 1, unit: "撮", group: "调味" }
+    stepDetails: [
+      { text: "鸡腿去骨切小块，加入盐、糖、生抽、料酒、清水和淀粉抓匀，再倒少量油抓匀，常温腌制20分钟。", imageUrl: "https://i2.chuimg.com/1a041d55d96249af8222a4104823418c_1920w_1920h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "锅中倒油，中火烧至六成热，放入花生米，转小火煸香后捞出。", imageUrl: "https://i2.chuimg.com/02a14b53e0fd4fa3ada7215ff059375d_1920w_1920h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "中火烧热油锅，放入腌好的鸡丁快速炒散；炒至表面变色后立即盛出。", imageUrl: "https://i2.chuimg.com/afd1c3286798419da9a1610b1e949bf2_1920w_1920h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "将醋、糖、盐、料酒、生抽、老抽和淀粉搅拌均匀，调成宫保汁。", imageUrl: "https://i2.chuimg.com/f6562fe90dfd4678ae16d89ba2a141a3_1920w_1920h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "锅留底油，放姜片、蒜片、葱段、花椒和干辣椒煸香；加入鸡丁炒匀，倒入宫保汁，大火快速翻炒。", imageUrl: "https://i2.chuimg.com/dc6adbcee3644504a391cb42c5381408_1920w_1920h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "最后放入花生米，快速翻炒均匀后出锅。", imageUrl: "https://i2.chuimg.com/ee5ff08a48424c2aa6ff21a1f0f43ff4_1920w_1920h.jpg?imageView2/2/w/800/interlace/1/q/75" }
     ],
-    steps: ["西兰花掰小朵焯水。", "蒜末炒香。", "西兰花回锅，加蚝油和盐快炒。"],
-    note: "作为配菜很稳。"
-  },
-  {
-    id: "beef-potato",
-    name: "土豆炖牛腩",
-    category: "肉菜",
-    meals: ["lunch", "dinner"],
-    time: 90,
-    difficulty: "周末",
-    rating: 5,
-    image:
-      "https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?auto=format&fit=crop&w=900&q=80",
-    ingredients: [
-      { name: "牛腩", amount: 500, unit: "克", group: "肉蛋" },
-      { name: "土豆", amount: 2, unit: "个", group: "蔬菜" },
-      { name: "胡萝卜", amount: 1, unit: "根", group: "蔬菜" },
-      { name: "洋葱", amount: 0.5, unit: "个", group: "蔬菜" },
-      { name: "八角", amount: 2, unit: "颗", group: "调味" }
-    ],
-    steps: ["牛腩焯水洗净。", "香料和洋葱炒香，下牛腩翻炒。", "加热水炖软，再放土豆胡萝卜。"],
-    note: "一次多做，第二顿更入味。"
-  },
-  {
-    id: "egg-pancake",
-    name: "鸡蛋饼",
-    category: "早餐",
-    meals: ["breakfast"],
-    time: 15,
-    difficulty: "轻松",
-    rating: 4,
-    image:
-      "https://images.unsplash.com/photo-1525351484163-7529414344d8?auto=format&fit=crop&w=900&q=80",
-    ingredients: [
-      { name: "鸡蛋", amount: 2, unit: "个", group: "蛋奶" },
-      { name: "面粉", amount: 80, unit: "克", group: "主食" },
-      { name: "小葱", amount: 1, unit: "根", group: "蔬菜" },
-      { name: "牛奶", amount: 80, unit: "毫升", group: "蛋奶" }
-    ],
-    steps: ["面粉、鸡蛋、牛奶调成面糊。", "加入葱花和盐。", "平底锅小火摊熟。"],
-    note: "早餐快手，也可加火腿。"
-  },
-  {
-    id: "pumpkin-congee",
-    name: "南瓜小米粥",
-    category: "汤粥",
-    meals: ["breakfast", "dinner"],
-    time: 35,
-    difficulty: "省心",
-    rating: 4,
-    image:
-      "https://images.unsplash.com/photo-1547592166-23ac45744acd?auto=format&fit=crop&w=900&q=80",
-    ingredients: [
-      { name: "南瓜", amount: 250, unit: "克", group: "蔬菜" },
-      { name: "小米", amount: 80, unit: "克", group: "主食" },
-      { name: "红枣", amount: 4, unit: "颗", group: "干货" }
-    ],
-    steps: ["小米淘洗，南瓜切块。", "加水煮到小米开花。", "加入红枣，小火继续煮浓稠。"],
-    note: "胃口一般时很合适。"
-  },
-  {
-    id: "shrimp-noodle",
-    name: "虾仁葱油面",
-    category: "主食",
-    meals: ["lunch", "dinner"],
-    time: 20,
-    difficulty: "稳妥",
-    rating: 5,
-    image:
-      "https://images.unsplash.com/photo-1612927601601-6638404737ce?auto=format&fit=crop&w=900&q=80",
-    ingredients: [
-      { name: "鲜面条", amount: 2, unit: "份", group: "主食" },
-      { name: "虾仁", amount: 200, unit: "克", group: "海鲜" },
-      { name: "小葱", amount: 4, unit: "根", group: "蔬菜" },
-      { name: "生抽", amount: 2, unit: "勺", group: "调味" }
-    ],
-    steps: ["小葱切段，小火炸葱油。", "虾仁煎熟。", "面条煮好后拌葱油、生抽和虾仁。"],
-    note: "不想炒多个菜时很好用。"
+    note: "酸甜微辣，鸡肉嫩滑，适合配米饭。"
   },
   {
     id: "corn-ribs-soup",
@@ -181,18 +122,41 @@ const starterDishes = [
     time: 70,
     difficulty: "省心",
     rating: 5,
-    image:
-      "https://images.unsplash.com/photo-1616501268209-edfff098fdd2?auto=format&fit=crop&w=900&q=80",
+    image: "https://i2.chuimg.com/c32e6335ab904475a0c141e08586361a_3024w_4032h.jpg?imageView2/1/w/800/h/600/q/75/format/jpg",
+    sourceUrl: "https://www.xiachufang.com/recipe/106405041/",
+    guideSource: "source",
     ingredients: [
       { name: "排骨", amount: 500, unit: "克", group: "肉蛋" },
       { name: "甜玉米", amount: 1, unit: "根", group: "蔬菜" },
       { name: "胡萝卜", amount: 1, unit: "根", group: "蔬菜" },
-      { name: "姜", amount: 3, unit: "片", group: "蔬菜" }
+      { name: "料酒", amount: 2, unit: "勺", group: "调味" },
+      { name: "姜", amount: 6, unit: "片", group: "蔬菜" },
+      { name: "盐", amount: 5, unit: "克", group: "调味" },
+      { name: "白胡椒粉", amount: 1, unit: "克", group: "调味" },
+      { name: "小葱", amount: 0.5, unit: "根", group: "蔬菜" }
     ],
-    steps: ["排骨焯水。", "和姜片一起加水炖煮。", "后半程放玉米胡萝卜，出锅前加盐。"],
-    note: "和任何快手炒菜都搭。"
+    stepDetails: [
+      { text: "排骨剁成寸段，在清水中浸泡半小时，期间换两三次水。", imageUrl: "https://i2.chuimg.com/2542959c4e324e3fac9f2b9d0ebcb4ac_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "将泡过水的排骨冲洗干净。", imageUrl: "https://i2.chuimg.com/6546a24fb5d14795accb806f61264a92_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "排骨凉水下锅，加入姜片、葱段和料酒，开火焯水。", imageUrl: "https://i2.chuimg.com/a28d9d365fa540aa96e2f062ce45044f_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "水开后撇去浮沫，将排骨捞出。", imageUrl: "https://i2.chuimg.com/adf2dfbe427744ae991225d67d970e03_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "浸泡和焯水后的排骨再次冲洗干净，避免汤中有腥味和杂质。", imageUrl: "https://i2.chuimg.com/8f4d7c209f5e4128adc1e2b6b1ec0018_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "锅里加清水，放入排骨和姜片；大火烧开后转小火炖40分钟左右。", imageUrl: "https://i2.chuimg.com/86add3399aa94b28804f93f652fff68c_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "炖排骨时，将玉米切小段、胡萝卜切小块备用。", imageUrl: "https://i2.chuimg.com/56d900d593204adc8248b15a76fca9fe_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "炖约40分钟，汤汁变白并有肉香。", imageUrl: "https://i2.chuimg.com/7e365ba6c11346e288a216d7a50f8831_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "放入玉米和胡萝卜，盖上锅盖继续炖30分钟左右。", imageUrl: "https://i2.chuimg.com/5f404f87277f41bc9ac8a818801ecc5b_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "玉米和胡萝卜成熟后，放盐和白胡椒粉调味。", imageUrl: "https://i2.chuimg.com/a16e1e5f86274f6fa85c81dbace12f24_2212w_1770h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "撒上小葱即可盛出。", imageUrl: "https://i2.chuimg.com/7c68fa7af8404c92acd3bfe7a5c66bce_3024w_2419h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "汤香肉烂，趁热享用。", imageUrl: "https://i2.chuimg.com/5984ce57c7b54e1a8706669217a76589_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" },
+      { text: "排骨肉香和玉米清香融合后即可上桌。", imageUrl: "https://i2.chuimg.com/352bc14ad8974c42a771c9e72baacbb9_3024w_4032h.jpg?imageView2/2/w/800/interlace/1/q/75" }
+    ],
+    note: "清甜不腻，汤香肉烂。"
   }
-];
+].map((dish) => ({
+  ...dish,
+  imageUrl: dish.image,
+  steps: dish.stepDetails.map((step) => step.text)
+}));
 
 const starterDishById = starterDishes.reduce((map, dish) => {
   map[dish.id] = dish;
@@ -257,7 +221,12 @@ function emptyPlan() {
 
 function createDefaultState() {
   return {
-    dishes: [],
+    dishes: starterDishes.map((dish) => ({
+      ...dish,
+      ingredients: dish.ingredients.map((ingredient) => ({ ...ingredient })),
+      steps: [...dish.steps],
+      stepDetails: dish.stepDetails.map((step) => ({ ...step }))
+    })),
     plans: { [todayKey()]: emptyPlan() },
     feedback: {},
     checkedItems: {},
