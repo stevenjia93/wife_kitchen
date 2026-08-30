@@ -77,6 +77,7 @@ async function importBestRecipe(candidates, query, options = {}) {
       const score = candidate.score + scoreRecipeCompleteness(recipe, query);
       return {
         score,
+        stepImageCount: countStepImages(recipe),
         recipe: {
           ...recipe,
           sourceUrl: recipe.sourceUrl || candidate.url,
@@ -92,8 +93,14 @@ async function importBestRecipe(candidates, query, options = {}) {
 
   const best = imported
     .filter((item) => item && isUsefulRecipe(item.recipe))
-    .sort((a, b) => b.score - a.score)[0];
+    .sort(compareImportedRecipes)[0];
   return best?.recipe || recipeFromSearchCandidate(ranked[0]);
+}
+
+function compareImportedRecipes(a, b) {
+  const imageCountDifference = (b.stepImageCount || 0) - (a.stepImageCount || 0);
+  if (imageCountDifference) return imageCountDifference;
+  return b.score - a.score;
 }
 
 function isUsefulRecipe(recipe) {
@@ -361,11 +368,15 @@ function scoreRecipeCompleteness(recipe, query) {
   if (recipe?.image) score += 8;
   if (Array.isArray(recipe?.ingredients)) score += Math.min(10, recipe.ingredients.length);
   if (Array.isArray(recipe?.steps)) score += Math.min(10, recipe.steps.length);
-  const stepImageCount = (Array.isArray(recipe?.stepDetails) ? recipe.stepDetails : []).filter(
-    (step) => step?.imageUrl || step?.image
-  ).length;
+  const stepImageCount = countStepImages(recipe);
   score += Math.min(48, stepImageCount * 8);
   return score;
+}
+
+function countStepImages(recipe) {
+  return (Array.isArray(recipe?.stepDetails) ? recipe.stepDetails : []).filter(
+    (step) => step?.imageUrl || step?.image
+  ).length;
 }
 
 function normalizeQuery(value) {
@@ -472,5 +483,6 @@ module.exports._internals = {
   normalizeGeneratedStepDetails,
   extractImageUrls,
   scoreSearchCandidate,
-  scoreRecipeCompleteness
+  scoreRecipeCompleteness,
+  compareImportedRecipes
 };

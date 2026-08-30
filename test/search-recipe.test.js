@@ -115,6 +115,12 @@ test("prefers a complete recipe with step photos", () => {
   assert.ok(illustrated > plain);
 });
 
+test("selects an illustrated recipe before a higher-scoring text-only recipe", () => {
+  const illustrated = { stepImageCount: 1, score: 120 };
+  const textOnly = { stepImageCount: 0, score: 500 };
+  assert.equal([textOnly, illustrated].sort(_internals.compareImportedRecipes)[0], illustrated);
+});
+
 test("keeps source step photos when Qwen supplies cleaner step text", () => {
   const details = _internals.mergeGuideStepDetails(
     ["打散鸡蛋", "炒软番茄"],
