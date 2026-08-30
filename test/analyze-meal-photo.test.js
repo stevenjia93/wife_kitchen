@@ -4,6 +4,7 @@ const sharp = require("sharp");
 
 const {
   analyzeMealPhoto,
+  buildPrompt,
   buildShareImagePrompt,
   buildShareOverlaySvg,
   dashscopeConfig,
@@ -57,6 +58,8 @@ test("千问 VL 使用百炼北京兼容接口并规范化分析结果", async (
     assert.equal(request.body.model, "qwen3-vl-plus");
     assert.equal(request.body.response_format.type, "json_object");
     assert.equal(request.body.messages[0].content[1].image_url.url, "data:image/jpeg;base64,AA==");
+    assert.doesNotMatch(request.body.messages[0].content[0].text, /今天菜单候选|番茄炒蛋/);
+    assert.match(request.body.messages[0].content[0].text, /只依据照片中实际可见/);
     assert.equal(analysis.totalCalories, 320);
     assert.equal(analysis.items[0].label, "番茄炒蛋");
   } finally {
@@ -64,6 +67,13 @@ test("千问 VL 使用百炼北京兼容接口并规范化分析结果", async (
     restoreEnv("DASHSCOPE_API_KEY", originalKey);
     restoreEnv("DASHSCOPE_BASE_URL", originalBaseUrl);
   }
+});
+
+test("图片识别提示词不把既有菜单当作菜品答案", () => {
+  const prompt = buildPrompt(["椒盐排条", "蚝油生菜"]);
+  assert.doesNotMatch(prompt, /椒盐排条|蚝油生菜|菜单候选/);
+  assert.match(prompt, /不要补全照片里看不到的菜/);
+  assert.match(prompt, /描述性名称/);
 });
 
 test("分享图使用百炼异步任务接口创建", async () => {
@@ -157,6 +167,17 @@ test("异步分享图完成后叠加精确热量文字并返回 JPEG", async () 
     restoreEnv("DASHSCOPE_API_KEY", originalKey);
     restoreEnv("DASHSCOPE_BASE_URL", originalBaseUrl);
   }
+});
+
+test("分享图叠加层包含手绘相框、纸张纹理和记录标题", () => {
+  const svg = buildShareOverlaySvg({
+    totalCalories: 680,
+    items: [{ label: "蒜蓉西兰花", calories: 120, bbox: { x: 0.62, y: 0.3, width: 0.22, height: 0.2 } }]
+  });
+  assert.match(svg, /paper-grain/);
+  assert.match(svg, /stroke-dasharray="19 13"/);
+  assert.match(svg, /今日份美食记录/);
+  assert.match(svg, /蒜蓉西兰花/);
 });
 
 test("分享图提示词禁止模型渲染不可靠的文字和数字", () => {

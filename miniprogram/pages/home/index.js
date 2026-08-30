@@ -29,8 +29,6 @@ const {
   actionableUnresolvedMeals,
   canViewOrder,
   canUploadMealPhotos,
-  planFoodTargets,
-  photoTargetName,
   aggregateShoppingList,
   groupedShoppingList,
   formatShoppingAmount,
@@ -207,12 +205,11 @@ Page({
     const dishes = this.filteredDishes();
     const featuredIndex = dishes.length ? Math.min(this.data.featuredIndex, dishes.length - 1) : 0;
     const activeDish = dishes[featuredIndex] || null;
-    const targets = planFoodTargets(this.state, plan);
     const orderVisible = canViewOrder(plan, dateKey);
     const activeTab = this.data.activeTab || this.data.role || "wife";
     const hasMenuDraft = selectedDishCount(plan) + wishCount(plan) > 0 || mealOrder.some((meal) => plan.skipped[meal]);
     const shopping = orderVisible ? aggregateShoppingList(this.state, plan) : [];
-    const photos = (plan.afterPhotos || []).map((photo) => this.buildPhotoView(photo, targets));
+    const photos = (plan.afterPhotos || []).map((photo) => this.buildPhotoView(photo));
     const activeMealItems = this.buildMealItems(plan, this.data.meal);
     const managedDishes = activeDishes(this.state)
       .slice()
@@ -430,7 +427,10 @@ Page({
       ratingText: recipe.searchRating ? `评分 ${recipe.searchRating}` : "",
       cookedText: recipe.searchCookedCount ? `${recipe.searchCookedCount} 人做过` : "",
       ingredientText: ingredients.slice(0, 10).join("、"),
-      stepText: steps.slice(0, 5).join(" / "),
+      stepPreview: steps.slice(0, 3).map((text, index) => ({
+        index: index + 1,
+        text: cleanStepDisplayText(text)
+      })),
       guideLabel: recipeGuideLabel(recipe.guideSource),
       error: wish.error || "暂时没找到参考菜谱。"
     };
@@ -464,38 +464,40 @@ Page({
       ingredients: (dish.ingredients || []).map((item) => ({ text: formatIngredient(item) })),
       steps: visibleSteps.map((step, index) => ({
         index: index + 1,
-        text: step.text || "打开下厨房查看完整步骤。",
+        text: cleanStepDisplayText(step.text) || "打开下厨房查看完整步骤。",
         imageSrc: stepImageSrc(step)
       }))
     };
   },
 
-  buildPhotoView(photo, targets) {
+  buildPhotoView(photo) {
     const originalImage = photo.localImagePath || photo.image || (this.photoImages && this.photoImages[photo.id]) || "";
     const displayImage = photo.shareImage || originalImage || "";
     const analysis = photo.analysis || null;
     const shareStartedAt = Date.parse(photo.shareStartedAt || "");
-    const shareStillRunning = photo.shareStatus === "loading" && shareStartedAt && Date.now() - shareStartedAt < 180000;
-    const targetNames = (photo.targetKeys || []).length
-      ? photo.targetKeys.map((key) => photoTargetName(key, targets)).filter(Boolean)
-      : ["整桌合照"];
+    const shareElapsedMs = shareStartedAt ? Date.now() - shareStartedAt : 0;
+    const shareStillRunning = photo.shareStatus === "loading" && shareStartedAt && shareElapsedMs < SHARE_TASK_MAX_WAIT_MS;
+    const recognizedNames = analysis
+      ? Array.from(new Set((analysis.items || []).map((item) => String(item.label || "").trim()).filter(Boolean))).slice(0, 6)
+      : [];
     return {
       ...photo,
       displayImage,
       isSharePreview: Boolean(photo.shareImage),
-      targetLabel: targetNames.join("、") || "整桌合照",
+      targetLabel: recognizedNames.join("、") || (photo.analysisStatus === "loading" ? "正在识别照片内容" : "整桌照片"),
       timeText: formatTime(photo.createdAt),
       totalCalories: analysis ? Math.round(analysis.totalCalories || 0) : 0,
       confidenceText: analysis ? confidenceText(analysis.confidence) : "",
       analysisItems: analysis ? (analysis.items || []).slice(0, 5) : [],
       canSaveShare: Boolean(photo.shareImage),
       canGenerateShare: Boolean(analysis && !photo.shareImage && originalImage && !shareStillRunning),
-      generateShareText: photo.shareStatus === "failed" || photo.shareStatus === "loading" ? "重新生成分享图" : "生成分享图",
+      generateShareText: photo.shareStatus === "failed" ? "重新生成分享图" : "生成分享图",
+      shareEtaText: shareStillRunning ? "预计 1–3 分钟，可先浏览其他页面" : "",
       statusText:
         shareStillRunning
-          ? "正在生成小红书分享图，完成后会自动替换"
+          ? "正在美化照片并添加手账标注"
           : photo.analysisStatus === "loading"
-            ? "正在识别热量"
+            ? "正在按照片识别菜品和热量"
             : ""
     };
   },
@@ -1075,13 +1077,11 @@ Page({
           const image = await this.imageFileToDataUrl(filePath);
           const photoId = `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
           const localImagePath = await this.dataUrlToLocalImageFile(image, photoId).catch(() => "");
-          const targets = planFoodTargets(this.state, plan);
           const photo = {
             id: photoId,
             image: "",
             localImagePath,
             imageOmitted: true,
-            targetKeys: targets.map((target) => target.key),
             createdAt: new Date().toISOString(),
             analysisStatus: "loading",
             shareStatus: "idle"
@@ -1176,14 +1176,10 @@ Page({
       showToast("原图没有保存在本地，请重新上传");
       return;
     }
-    const targets = planFoodTargets(this.state, plan);
-    const targetNames = (photo.targetKeys || []).map((key) => photoTargetName(key, targets)).filter(Boolean);
-
     try {
       this.patchPhoto(photoId, { analysisStatus: "loading", analysisError: "" });
       const payload = await requestApi("/api/analyze-meal-photo", {
         image,
-        targetNames,
         includeShareImage: false
       });
       this.patchPhoto(photoId, {
@@ -1194,7 +1190,7 @@ Page({
       });
 
       if (options.autoShare) {
-        await this.generateMealSharePhoto(photoId, { image, targetNames, analysis: payload.analysis, quiet: true });
+        await this.generateMealSharePhoto(photoId, { image, analysis: payload.analysis, quiet: true });
       }
     } catch (error) {
       const latestPlan = ensurePlan(this.state, this.data.dateKey);
@@ -1254,15 +1250,12 @@ Page({
       if (!options.quiet) showToast("原图没有保存在本地");
       return;
     }
-    const targets = planFoodTargets(this.state, plan);
-    const targetNames = options.targetNames || (photo.targetKeys || []).map((key) => photoTargetName(key, targets)).filter(Boolean);
     this.patchPhoto(photoId, { shareStatus: "loading", shareError: "", shareStartedAt: new Date().toISOString() });
     try {
       let sharePayload = await requestApi(
         "/api/analyze-meal-photo",
         {
           image,
-          targetNames,
           includeShareImage: true,
           analysis
         },
@@ -1508,7 +1501,7 @@ function dishFromRecipe(recipe, fallbackName) {
     sourceUrl: String((recipe && recipe.sourceUrl) || "").trim(),
     guideSource: String((recipe && recipe.guideSource) || "").trim(),
     ingredients,
-    steps: Array.isArray(recipe && recipe.steps) ? recipe.steps.map((step) => String(step || "").trim()).filter(Boolean).slice(0, 12) : [],
+    steps: Array.isArray(recipe && recipe.steps) ? recipe.steps.map(cleanStepDisplayText).filter(Boolean).slice(0, 12) : [],
     stepDetails: Array.isArray(recipe && recipe.stepDetails) ? recipe.stepDetails.map(normalizeStepItem).filter((step) => step.text || step.image || step.imageUrl).slice(0, 12) : [],
     note: String((recipe && recipe.note) || "从下厨房导入。").trim().slice(0, 80)
   };
@@ -1592,12 +1585,19 @@ function dishStepItems(dish) {
 }
 
 function normalizeStepItem(step) {
-  if (typeof step === "string") return { text: step.trim(), image: "", imageUrl: "" };
+  if (typeof step === "string") return { text: cleanStepDisplayText(step), image: "", imageUrl: "" };
   return {
-    text: String((step && step.text) || "").trim(),
+    text: cleanStepDisplayText((step && step.text) || ""),
     image: String((step && step.image) || "").trim(),
     imageUrl: String((step && step.imageUrl) || "").trim()
   };
+}
+
+function cleanStepDisplayText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/^\s*(?:步骤\s*)?\d+\s*[.．、:：]\s*/, "")
+    .trim();
 }
 
 function stepImageSrc(step) {

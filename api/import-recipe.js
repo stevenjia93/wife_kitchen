@@ -6,7 +6,7 @@ const MAX_STEP_ITEMS = 20;
 const PAGE_FETCH_TIMEOUT_MS = 8000;
 const IMAGE_FETCH_TIMEOUT_MS = 3500;
 const USER_AGENT =
-  "Mozilla/5.0 (compatible; WifeKitchenRecipeImporter/1.2)";
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
 
 async function handler(req, res) {
   if (req.method === "OPTIONS") {
@@ -150,8 +150,9 @@ function parseRecipePage(html, sourceUrl) {
   );
   const description = firstText(recipeJson?.description) || metadata["og:description"] || "";
   const ingredients = normalizeLines(recipeJson?.recipeIngredient);
-  const jsonSteps = normalizeInstructions(recipeJson?.recipeInstructions);
-  const stepDetails = mergeStepDetails(extractStepDetails(html, sourceUrl), jsonSteps);
+  const jsonStepDetails = normalizeInstructionDetails(recipeJson?.recipeInstructions, sourceUrl);
+  const jsonSteps = jsonStepDetails.map((step) => step.text).filter(Boolean);
+  const stepDetails = mergeStepDetails(extractStepDetails(html, sourceUrl), jsonStepDetails);
   const steps = stepDetails.length ? stepDetails.map((step) => step.text).filter(Boolean) : jsonSteps;
   const image = absoluteUrl(firstText(recipeJson?.image) || metadata["og:image"] || "", sourceUrl);
   const totalTime = parseDurationMinutes(firstText(recipeJson?.totalTime) || firstText(recipeJson?.cookTime));
@@ -252,21 +253,19 @@ function normalizeLines(value) {
   return list.map((item) => cleanText(firstText(item))).filter(Boolean).slice(0, 40);
 }
 
-function normalizeInstructions(value) {
-  const list = flattenInstructions(value);
-  return list
-    .flatMap((item) => splitInstructionText(firstText(item)))
-    .map(cleanStepText)
-    .filter(Boolean)
+function normalizeInstructionDetails(value, sourceUrl) {
+  return flattenInstructionDetails(value)
+    .flatMap((item) => {
+      const texts = splitInstructionText(item.text).map(cleanStepText).filter(Boolean);
+      const image = absoluteUrl(item.image, sourceUrl);
+      return texts.map((text, index) => ({ text, image: index === 0 ? image : "" }));
+    })
     .slice(0, MAX_STEP_ITEMS);
 }
 
 function extractStepDetails(html, sourceUrl) {
-  const section = extractStepsSection(html);
-  if (!section) return [];
-
   const blocks =
-    section.match(/<div\b[^>]*class=["'][^"']*\bstep\s+step\b[^"']*["'][\s\S]*?(?=<div\b[^>]*class=["'][^"']*\bstep\s+step\b|<\/section>)/gi) ||
+    html.match(/<div\b[^>]*class=["'][^"']*\bstep\s+step\b[^"']*["'][\s\S]*?(?=<div\b[^>]*class=["'][^"']*\bstep\s+step\b|<\/section>|<\/main>|$)/gi) ||
     [];
 
   return blocks
@@ -277,8 +276,13 @@ function extractStepDetails(html, sourceUrl) {
       );
       const imageTag = firstMatch(block, /(<img\b[^>]*>)/i);
       const styleImage = firstMatch(block, /background-image:\s*url\((['"]?)(.*?)\1\)/i, 2);
-      const rawImage = attr(imageTag, "src") || attr(imageTag, "data-src") || styleImage;
-      const text = cleanStepText(stripTags(rawText).replace(/<br\s*\/?>/gi, "\n"));
+      const rawImage =
+        attr(imageTag, "data-original") ||
+        attr(imageTag, "data-src") ||
+        attr(imageTag, "data-lazy-src") ||
+        attr(imageTag, "src") ||
+        styleImage;
+      const text = cleanStepText(stripTags(rawText.replace(/<br\s*\/?>/gi, "\n")));
       const image = absoluteUrl(decodeHtml(rawImage), sourceUrl);
       return { text, image };
     })
@@ -286,36 +290,25 @@ function extractStepDetails(html, sourceUrl) {
     .slice(0, MAX_STEP_ITEMS);
 }
 
-function extractStepsSection(html) {
-  const startMatch = html.match(/<section\b[^>]*id=["']steps["'][^>]*>/i);
-  if (!startMatch || startMatch.index === undefined) return "";
-  const start = startMatch.index;
-  const end = html.indexOf("</section>", start + startMatch[0].length);
-  return end === -1 ? html.slice(start) : html.slice(start, end + "</section>".length);
-}
-
 function mergeStepDetails(domSteps, jsonSteps) {
-  if (Array.isArray(domSteps) && domSteps.length) {
-    return domSteps
-      .map((step, index) => ({
-        text: step.text || jsonSteps[index] || "",
-        image: step.image || ""
-      }))
-      .filter((step) => step.text || step.image)
-      .slice(0, MAX_STEP_ITEMS);
-  }
-  return (jsonSteps || []).map((text) => ({ text, image: "" })).slice(0, MAX_STEP_ITEMS);
+  const dom = Array.isArray(domSteps) ? domSteps : [];
+  const json = Array.isArray(jsonSteps) ? jsonSteps : [];
+  const count = Math.min(MAX_STEP_ITEMS, Math.max(dom.length, json.length));
+  return Array.from({ length: count }, (_, index) => ({
+    text: dom[index]?.text || json[index]?.text || "",
+    image: dom[index]?.image || json[index]?.image || ""
+  })).filter((step) => step.text || step.image);
 }
 
-function flattenInstructions(value) {
+function flattenInstructionDetails(value) {
   if (!value) return [];
-  if (typeof value === "string") return value.split(/\n+/);
-  if (Array.isArray(value)) return value.flatMap(flattenInstructions);
+  if (typeof value === "string") return [{ text: value, image: "" }];
+  if (Array.isArray(value)) return value.flatMap(flattenInstructionDetails);
   if (typeof value !== "object") return [];
-  if (value.text) return [value.text];
-  if (value.name) return [value.name];
-  if (value.itemListElement) return flattenInstructions(value.itemListElement);
-  return [];
+  if (value.itemListElement) return flattenInstructionDetails(value.itemListElement);
+  const text = firstText(value.text) || firstText(value.name);
+  const image = firstText(value.image);
+  return text || image ? [{ text, image }] : [];
 }
 
 function parseDurationMinutes(value) {
@@ -347,6 +340,7 @@ function firstText(value) {
 
 function cleanRecipeTitle(value) {
   return cleanText(value)
+    .replace(/^【步骤图】\s*/, "")
     .replace(/\s*的做法.*$/i, "")
     .replace(/[_-]\s*下厨房.*$/i, "")
     .replace(/\s*下厨房\s*$/i, "")
@@ -414,5 +408,6 @@ module.exports._internals = {
   parseRecipePage,
   normalizeSourceUrl,
   fetchImageDataUrl,
-  extractStepDetails
+  extractStepDetails,
+  normalizeInstructionDetails
 };

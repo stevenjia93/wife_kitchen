@@ -56,7 +56,6 @@
     </view>
 
     <view class="sync-row">
-      <view class="pill">{{householdName}}</view>
       <view class="sync-actions">
         <button class="share-house" open-type="share" disabled="{{!inviteReady}}">{{inviteReady ? '邀请加入' : '准备邀请'}}</button>
         <button class="switch-house" bindtap="leaveHousehold">切换家庭</button>
@@ -237,9 +236,14 @@
                     <text class="mini-label">原料参考</text>
                     <text>{{item.ingredientText}}</text>
                   </view>
-                  <view wx:if="{{item.stepText}}" class="mini-section">
+                  <view wx:if="{{item.stepPreview.length}}" class="mini-section">
                     <text class="mini-label">{{item.guideLabel}}</text>
-                    <text>{{item.stepText}}</text>
+                    <view class="wish-step-preview">
+                      <view wx:for="{{item.stepPreview}}" wx:key="index" wx:for-item="step" class="wish-step-row">
+                        <text class="wish-step-index">{{step.index}}</text>
+                        <text class="wish-step-text">{{step.text}}</text>
+                      </view>
+                    </view>
                   </view>
                 </block>
                 <view wx:else class="mini-empty">{{item.error}}</view>
@@ -327,7 +331,7 @@
       </view>
       <button wx:if="{{canUploadPhotos}}" class="upload-card" bindtap="uploadMealPhoto">
         <text>上传整桌照</text>
-        <text>自动估算 kcal 并生成分享图</text>
+        <text>按照片识别菜品，再估算 kcal 和生成分享图</text>
       </button>
       <view wx:for="{{photos}}" wx:key="id" class="photo-card">
         <view wx:if="{{item.displayImage}}" class="meal-photo-frame">
@@ -341,8 +345,12 @@
           </view>
           <button wx:if="{{canUploadPhotos}}" class="remove-btn" data-id="{{item.id}}" bindtap="removePhoto">×</button>
         </view>
-        <view wx:if="{{item.statusText}}" class="loading-line">{{item.statusText}}</view>
-        <view wx:elif="{{item.analysis}}" class="calorie-box">
+        <view wx:if="{{item.statusText}}" class="loading-line">
+          <view class="share-progress-title">{{item.statusText}}</view>
+          <view wx:if="{{item.shareEtaText}}" class="share-progress-meta">{{item.shareEtaText}}</view>
+          <view wx:if="{{item.shareEtaText}}" class="share-progress-track"><view class="share-progress-bar"></view></view>
+        </view>
+        <view wx:if="{{item.analysis}}" class="calorie-box">
           <view>
             <view class="calorie-number">{{item.totalCalories}}</view>
             <view class="subtitle">kcal 粗估</view>
@@ -438,7 +446,7 @@
               <view wx:for="{{detailDish.steps}}" wx:key="index" class="step-card">
                 <view class="step-index">{{item.index}}</view>
                 <view class="step-body">
-                  <image wx:if="{{item.imageSrc}}" class="step-image" src="{{item.imageSrc}}" mode="aspectFill"></image>
+                  <image wx:if="{{item.imageSrc}}" class="step-image" src="{{item.imageSrc}}" mode="widthFix"></image>
                   <view class="step-text">{{item.text}}</view>
                 </view>
               </view>

@@ -97,22 +97,23 @@ async function analyzeMealPhoto(image, targetNames = []) {
   return normalizeAnalysis(parsed);
 }
 
-function buildPrompt(targetNames) {
-  const knownDishes = targetNames.length ? `\n今天菜单候选：${targetNames.join("、")}。优先把画面里的食物匹配到这些菜名；如果明显不是，也可以写识别到的菜名。` : "";
+function buildPrompt() {
   return `
 你是家庭饭菜照片的营养估算助手。请观察图片里的每一盘/每碗主要食物，输出热量估算和标注框。
 
 要求：
-1. 每个主要食物单独作为一个 item，不要把餐具、饮料、餐桌背景算进去。
-2. bbox 使用 0 到 1 的归一化坐标，x/y 为左上角，width/height 为宽高。
-3. calories 是这一盘可见食物的大致千卡估算；totalCalories 是所有 item calories 的合计。
-4. confidence 只能是 low、medium、high。照片看不清、遮挡或份量不确定时用 low 或 medium。
-5. portion 写你估算的可见份量，比如“约 1 碗”“约 180g”“2 块”。
-6. calorieReason 用 24 个中文字符以内说明热量判断依据，比如“含米饭和芝士酱”。
-7. notes 简短提醒这是视觉估算，不是精确营养数据。
-8. 只输出一个 JSON 对象，不要输出 Markdown 或解释文字。JSON 必须严格符合以下字段：
+1. 只依据照片中实际可见的食材、颜色、形态和做法识别菜品；不要参考、猜测或套用用户菜单，也不要补全照片里看不到的菜。
+2. 每个主要食物单独作为一个 item，不要把餐具、饮料、餐桌背景算进去；同一盘菜不要重复计算。
+3. 菜名不确定时，使用贴合画面的描述性名称（例如“蒜蓉西兰花”“清炒豆芽”），并降低 confidence，不能为了给出熟悉菜名而臆测。
+4. 区分相似菜时优先依据可见主料、配菜、汤汁和烹饪形态；看不清的细节不要写进名称或热量依据。
+5. bbox 使用 0 到 1 的归一化坐标，x/y 为左上角，width/height 为宽高。
+6. calories 是这一盘可见食物的大致千卡估算；先按可见份量、主料和烹饪用油分别估算，再给出整数；totalCalories 是所有 item calories 的合计。
+7. confidence 只能是 low、medium、high。照片看不清、遮挡或份量不确定时用 low 或 medium。
+8. portion 写你估算的可见份量，比如“约 1 碗”“约 180g”“2 块”。
+9. calorieReason 用 24 个中文字符以内说明热量判断依据，比如“鸡蛋约3个并含炒制用油”。
+10. notes 简短提醒这是视觉估算，不是精确营养数据。
+11. 只输出一个 JSON 对象，不要输出 Markdown 或解释文字。JSON 必须严格符合以下字段：
 {"totalCalories":整数,"confidence":"low|medium|high","notes":"字符串","items":[{"label":"字符串","portion":"字符串","calorieReason":"字符串","calories":整数,"confidence":"low|medium|high","bbox":{"x":0到1,"y":0到1,"width":0到1,"height":0到1}}]}
-${knownDishes}
 `.trim();
 }
 
@@ -224,14 +225,14 @@ function buildShareImagePrompt(analysis) {
     .join("\n");
 
   return `
-把这张餐桌照片编辑成竖版 4:5、可以发小红书的美食热量记录底图。保留原始食物、餐具、桌面和主要构图，不要替换菜品，不要新增不存在的食物，不要把照片变成插画。
+把这张餐桌照片编辑成竖版 4:5、可以发小红书的美食手账底图。保留原始食物、餐具、桌面和主要构图，不要替换菜品，不要新增不存在的食物，不要把照片变成插画。
 
 视觉要求：
-1. 轻微提升自然光、食物色泽和层次，保持真实照片质感，不要过度磨皮或改变食物外观。
+1. 做成温暖的胶片生活记录：轻微提升自然光、食物色泽和层次，增加很淡的纸张颗粒与奶油色高光，保持真实照片质感，不要过度磨皮或改变食物外观。
 2. 不要使用矩形检测框、边界框、UI 样式框或机器视觉风格。
-3. 用白色 Apple Pencil 手绘感线条，沿盘子、碗和主要食物的真实外轮廓做不规则圈线；可以有一条虚线或重复描边，线条要松弛自然。
+3. 用明显但不遮挡食物的白色 Apple Pencil 手绘线，沿盘子、碗和主要食物的真实外轮廓做不规则双重圈线；一条实线配一条断续重复描边，线条要松弛自然。
 4. 在桌面空白处点缀少量手绘爱心、四角星、波浪线和小箭头，像生活方式博主直接在照片上做的随手笔记。
-5. 保持整张照片通透完整，不要制作顶部或底部的大色块、大白卡、信息面板，也不要为了排版制造正式留白区。
+5. 保持整张照片通透完整，可在画面四周加入很细的手绘相框轮廓，但不要制作顶部或底部的大色块、大白卡、信息面板，也不要为了排版制造正式留白区。
 6. 图中不要生成任何文字、数字、单位、二维码、水印或品牌标志；准确文字稍后由程序叠加。
 7. 手绘线和装饰不要遮挡食物主体，不要改变食物数量、种类或份量。
 8. 整体要温暖、有生活气、轻盈俏皮，像好看的小红书美食手账，而不是营养报告或商业海报。
@@ -296,21 +297,29 @@ function buildShareOverlaySvg(analysis) {
     <defs>
       <filter id="ink-shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#101510" flood-opacity="0.62"/></filter>
       <filter id="bubble-shadow" x="-20%" y="-30%" width="140%" height="170%"><feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#101510" flood-opacity="0.32"/></filter>
+      <filter id="paper-grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" seed="17"/><feColorMatrix type="saturate" values="0"/></filter>
       <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#FFFFFF"/></marker>
     </defs>
     <style>
       .title,.total,.item-label,.item-kcal{font-family:'LXGW WenKai Lite','LXGW WenKai','Kaiti SC','STKaiti','KaiTi',serif;font-weight:600}
-      .title,.total{paint-order:stroke;stroke:#172019;stroke-opacity:0.72;stroke-width:8px;stroke-linejoin:round;filter:url(#ink-shadow)}
+      .title,.total{paint-order:stroke;stroke:#172019;stroke-opacity:0.78;stroke-width:8px;stroke-linejoin:round;filter:url(#ink-shadow)}
       .title{font-size:48px;fill:#FFFDF7;letter-spacing:3px}.total{font-size:56px;fill:#FFE4A8;letter-spacing:1px}
       .meal-bubble{filter:url(#bubble-shadow)}.meal-bubble path{fill:#1E2620;fill-opacity:0.70;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round}
       .item-label,.item-kcal{text-anchor:middle;paint-order:stroke;stroke:#1E2620;stroke-width:2px;stroke-linejoin:round}
       .item-label{font-size:31px;fill:#FFFFFF}.item-kcal{font-size:25px}
       .doodle-arrow{fill:none;stroke:#FFFFFF;stroke-width:5px;stroke-linecap:round;stroke-dasharray:11 9;filter:url(#ink-shadow)}
     </style>
+    <rect width="${SHARE_IMAGE_WIDTH}" height="${SHARE_IMAGE_HEIGHT}" fill="#F7E9C9" opacity="0.055"/>
+    <rect width="${SHARE_IMAGE_WIDTH}" height="${SHARE_IMAGE_HEIGHT}" filter="url(#paper-grain)" opacity="0.038"/>
+    <g fill="none" stroke="#FFFDF7" stroke-linecap="round" stroke-linejoin="round" filter="url(#ink-shadow)">
+      <path d="M 35 46 Q 302 24 509 39 T 987 48 Q 1005 306 991 620 T 988 1235 Q 742 1257 503 1243 T 34 1234 Q 18 930 32 643 T 35 46 Z" stroke-width="6"/>
+      <path d="M 51 62 Q 284 42 511 57 T 971 65 Q 985 321 974 636 T 970 1218 Q 750 1239 511 1224 T 51 1218 Q 37 927 49 642 T 51 62 Z" stroke-width="3" stroke-dasharray="19 13" opacity="0.82"/>
+    </g>
     <g transform="rotate(-2 66 95)">
-      <text x="58" y="86" class="title">今日份美食记录</text>
-      <text x="60" y="151" class="total">约 ${analysis.totalCalories} kcal</text>
-      <path d="M 64 165 Q 210 184 382 164" fill="none" stroke="#FFFDF7" stroke-width="5" stroke-linecap="round" stroke-dasharray="15 10" filter="url(#ink-shadow)"/>
+      <path d="M 45 39 Q 208 20 409 39 L 429 112 Q 225 128 48 112 Z" fill="#1E2620" fill-opacity="0.72" stroke="#FFFDF7" stroke-width="4" stroke-linejoin="round" filter="url(#bubble-shadow)"/>
+      <text x="66" y="88" class="title">今日份美食记录</text>
+      <path d="M 48 128 Q 205 111 382 129 L 397 184 Q 216 202 53 184 Z" fill="#1E2620" fill-opacity="0.68" stroke="#FFFDF7" stroke-width="3" stroke-linejoin="round" filter="url(#bubble-shadow)"/>
+      <text x="66" y="173" class="total">约 ${analysis.totalCalories} kcal</text>
     </g>
     ${bubbles}
     <g fill="none" stroke="#FFFDF7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#ink-shadow)">
@@ -469,6 +478,7 @@ function httpError(message, statusCode) {
 module.exports = handler;
 module.exports._internals = {
   analyzeMealPhoto,
+  buildPrompt,
   buildShareImagePrompt,
   buildShareOverlaySvg,
   dashscopeConfig,

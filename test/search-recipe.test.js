@@ -56,6 +56,8 @@ test("uses Qwen to complete a matched recipe without readable steps", async () =
     assert.equal(url, "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
     const body = JSON.parse(options.body);
     assert.equal(body.model, "qwen-plus");
+    assert.equal(body.enable_search, undefined);
+    assert.equal(body.enable_text_image_mixed, undefined);
     return {
       ok: true,
       json: async () => ({
@@ -88,4 +90,57 @@ test("uses Qwen to complete a matched recipe without readable steps", async () =
     if (originalKey === undefined) delete process.env.DASHSCOPE_API_KEY;
     else process.env.DASHSCOPE_API_KEY = originalKey;
   }
+});
+
+test("prefers a complete recipe with step photos", () => {
+  const plain = _internals.scoreRecipeCompleteness({
+    name: "番茄炒蛋",
+    image: "cover.jpg",
+    ingredients: ["鸡蛋", "番茄"],
+    steps: ["第一步", "第二步", "第三步"],
+    stepDetails: [{ text: "第一步" }, { text: "第二步" }, { text: "第三步" }]
+  }, "番茄炒蛋");
+  const illustrated = _internals.scoreRecipeCompleteness({
+    name: "番茄炒蛋",
+    image: "cover.jpg",
+    ingredients: ["鸡蛋", "番茄"],
+    steps: ["第一步", "第二步", "第三步"],
+    stepDetails: [
+      { text: "第一步", imageUrl: "step-1.jpg" },
+      { text: "第二步", imageUrl: "step-2.jpg" },
+      { text: "第三步", imageUrl: "step-3.jpg" }
+    ]
+  }, "番茄炒蛋");
+  assert.ok(illustrated > plain);
+});
+
+test("keeps source step photos when Qwen supplies cleaner step text", () => {
+  const details = _internals.mergeGuideStepDetails(
+    ["打散鸡蛋", "炒软番茄"],
+    [
+      { text: "旧步骤一", imageUrl: "https://i2.chuimg.com/step-1.jpg" },
+      { text: "旧步骤二", image: "https://i2.chuimg.com/step-2.jpg" }
+    ]
+  );
+  assert.deepEqual(details, [
+    { text: "打散鸡蛋", image: "", imageUrl: "https://i2.chuimg.com/step-1.jpg" },
+    {
+      text: "炒软番茄",
+      image: "https://i2.chuimg.com/step-2.jpg",
+      imageUrl: "https://i2.chuimg.com/step-2.jpg"
+    }
+  ]);
+});
+
+test("normalizes image URLs returned by Qwen mixed text-image search", () => {
+  const steps = _internals.normalizeGeneratedStepDetails([
+    { text: "鸡蛋打散。", imageUrl: "https://i2.chuimg.com/egg.jpg" },
+    "<img src=\"https://i2.chuimg.com/tomato.jpg\">番茄炒出汤汁。",
+    { text: "合炒一分钟。", imageUrl: "javascript:alert(1)" }
+  ]);
+  assert.deepEqual(steps, [
+    { text: "鸡蛋打散。", image: "", imageUrl: "https://i2.chuimg.com/egg.jpg" },
+    { text: "番茄炒出汤汁。", image: "", imageUrl: "https://i2.chuimg.com/tomato.jpg" },
+    { text: "合炒一分钟。", image: "", imageUrl: "" }
+  ]);
 });

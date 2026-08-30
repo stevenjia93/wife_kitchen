@@ -1,7 +1,7 @@
 const importRecipeApi = require("./import-recipe.js");
 
 const MAX_SEARCH_HTML_CHARS = 1_000_000;
-const SEARCH_IMPORT_LIMIT = 2;
+const SEARCH_IMPORT_LIMIT = 3;
 const SEARCH_FETCH_TIMEOUT_MS = 6500;
 const RECIPE_FETCH_TIMEOUT_MS = 9000;
 const RECIPE_IMAGE_TIMEOUT_MS = 6500;
@@ -62,10 +62,8 @@ async function handler(req, res) {
 }
 
 async function importBestRecipe(candidates, query, options = {}) {
-  let best = null;
   const ranked = candidates.slice(0, SEARCH_IMPORT_LIMIT);
-
-  for (const candidate of ranked) {
+  const imported = await Promise.all(ranked.map(async (candidate) => {
     try {
       const recipe = await importRecipeFromUrl(candidate.url, {
         includeImages: options.includeImages !== false,
@@ -77,25 +75,24 @@ async function importBestRecipe(candidates, query, options = {}) {
         maxStepImageBytes: 180_000
       });
       const score = candidate.score + scoreRecipeCompleteness(recipe, query);
-      const enrichedRecipe = {
-        ...recipe,
-        sourceUrl: recipe.sourceUrl || candidate.url,
-        searchTitle: candidate.title,
-        searchRating: candidate.rating,
-        searchCookedCount: candidate.cookedCount
+      return {
+        score,
+        recipe: {
+          ...recipe,
+          sourceUrl: recipe.sourceUrl || candidate.url,
+          searchTitle: candidate.title,
+          searchRating: candidate.rating,
+          searchCookedCount: candidate.cookedCount
+        }
       };
-      if (isUsefulRecipe(enrichedRecipe)) return enrichedRecipe;
-      if (!best || score > best.score) {
-        best = {
-          score,
-          recipe: enrichedRecipe
-        };
-      }
     } catch {
-      continue;
+      return null;
     }
-  }
+  }));
 
+  const best = imported
+    .filter((item) => item && isUsefulRecipe(item.recipe))
+    .sort((a, b) => b.score - a.score)[0];
   return best?.recipe || recipeFromSearchCandidate(ranked[0]);
 }
 
@@ -164,7 +161,13 @@ async function ensureInAppRecipeGuide(recipe, query) {
   const ingredients = normalizeStringList(recipe?.ingredients, 32);
   const steps = normalizeStringList(recipe?.steps, 12);
   if (ingredients.length >= 2 && steps.length >= 3) {
-    return { ...recipe, ingredients, steps, guideSource: recipe.guideSource || "source" };
+    return {
+      ...recipe,
+      ingredients,
+      steps,
+      stepDetails: mergeGuideStepDetails(steps, recipe?.stepDetails),
+      guideSource: recipe.guideSource || "source"
+    };
   }
 
   try {
@@ -172,6 +175,7 @@ async function ensureInAppRecipeGuide(recipe, query) {
     return {
       ...recipe,
       ...generated,
+      stepDetails: mergeGuideStepDetails(generated.steps, recipe?.stepDetails, generated.stepDetails),
       image: recipe.image || "",
       imageUrl: recipe.imageUrl || recipe.image || "",
       sourceUrl: recipe.sourceUrl || "",
@@ -180,7 +184,8 @@ async function ensureInAppRecipeGuide(recipe, query) {
       guideSource: "qwen",
       note: `${recipe.note || "已匹配高分菜谱。"} 以下为千问整理的家庭参考做法。`.slice(0, 160)
     };
-  } catch {
+  } catch (error) {
+    console.warn("Recipe guide generation fell back to local steps:", error.message || error);
     return buildLocalRecipeGuide(recipe, query);
   }
 }
@@ -216,16 +221,18 @@ async function generateRecipeGuide(recipe, query) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error?.message || payload.message || "千问菜谱整理失败");
   const content = payload.choices?.[0]?.message?.content;
-  const parsed = parseJsonText(Array.isArray(content) ? content.map((item) => item.text || "").join("") : content);
+  const responseText = Array.isArray(content) ? content.map((item) => item.text || "").join("") : content;
+  const parsed = parseJsonText(responseText);
   const ingredients = normalizeStringList(parsed.ingredients, 32);
-  const steps = normalizeStringList(parsed.steps, 12);
+  const stepDetails = normalizeGeneratedStepDetails(parsed.steps, extractImageUrls(responseText));
+  const steps = stepDetails.map((step) => step.text).filter(Boolean);
   if (ingredients.length < 2 || steps.length < 3) throw new Error("千问菜谱内容不完整");
   return {
     name: cleanText(parsed.name || recipe?.name || query).slice(0, 40),
     time: Math.max(5, Math.min(180, Math.round(Number(parsed.time) || Number(recipe?.time) || 20))),
     ingredients,
     steps,
-    stepDetails: steps.map((text) => ({ text, image: "", imageUrl: "" }))
+    stepDetails
   };
 }
 
@@ -258,10 +265,56 @@ function buildLocalRecipeGuide(recipe, query) {
     name,
     ingredients,
     steps,
-    stepDetails: steps.map((text) => ({ text, image: "", imageUrl: "" })),
+    stepDetails: mergeGuideStepDetails(steps, recipe?.stepDetails),
     guideSource: "local",
     note: `${recipe?.note || "已匹配高分菜谱。"} 详情读取受限，以下为小程序整理的家庭参考做法。`.slice(0, 160)
   };
+}
+
+function mergeGuideStepDetails(steps, value, fallbackValue = []) {
+  const details = Array.isArray(value) ? value : [];
+  const fallback = Array.isArray(fallbackValue) ? fallbackValue : [];
+  return steps.map((text, index) => ({
+    text,
+    image: cleanText(details[index]?.image || fallback[index]?.image || ""),
+    imageUrl: cleanText(
+      details[index]?.imageUrl || details[index]?.image || fallback[index]?.imageUrl || fallback[index]?.image || ""
+    )
+  }));
+}
+
+function normalizeGeneratedStepDetails(value, fallbackImages = []) {
+  return (Array.isArray(value) ? value : [])
+    .map((item, index) => {
+      const rawText = typeof item === "string" ? item : item?.text || item?.name || "";
+      const inlineImages = extractImageUrls(typeof item === "string" ? item : JSON.stringify(item || {}));
+      const text = cleanText(String(rawText).replace(/<img\b[^>]*>/gi, " ").replace(/<[^>]+>/g, " "));
+      const imageUrl = normalizeGeneratedImageUrl(
+        (typeof item === "object" && (item?.imageUrl || item?.image)) || inlineImages[0] || fallbackImages[index] || ""
+      );
+      return { text, image: "", imageUrl };
+    })
+    .filter((step) => step.text)
+    .slice(0, 12);
+}
+
+function extractImageUrls(value) {
+  const text = String(value || "");
+  const urls = [];
+  for (const match of text.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)) urls.push(match[1]);
+  for (const match of text.matchAll(/https?:\\?\/\\?\/[^\s"'<>]+/gi)) urls.push(match[0].replace(/\\\//g, "/"));
+  return Array.from(new Set(urls.map(normalizeGeneratedImageUrl).filter(Boolean)));
+}
+
+function normalizeGeneratedImageUrl(value) {
+  const text = cleanText(value);
+  try {
+    const url = new URL(text);
+    if (url.protocol !== "https:") return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 function normalizeStringList(value, limit) {
@@ -308,6 +361,10 @@ function scoreRecipeCompleteness(recipe, query) {
   if (recipe?.image) score += 8;
   if (Array.isArray(recipe?.ingredients)) score += Math.min(10, recipe.ingredients.length);
   if (Array.isArray(recipe?.steps)) score += Math.min(10, recipe.steps.length);
+  const stepImageCount = (Array.isArray(recipe?.stepDetails) ? recipe.stepDetails : []).filter(
+    (step) => step?.imageUrl || step?.image
+  ).length;
+  score += Math.min(48, stepImageCount * 8);
   return score;
 }
 
@@ -411,6 +468,9 @@ module.exports._internals = {
   recipeFromSearchCandidate,
   ensureInAppRecipeGuide,
   buildLocalRecipeGuide,
+  mergeGuideStepDetails,
+  normalizeGeneratedStepDetails,
+  extractImageUrls,
   scoreSearchCandidate,
   scoreRecipeCompleteness
 };
