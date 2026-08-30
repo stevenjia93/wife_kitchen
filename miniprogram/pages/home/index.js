@@ -1519,7 +1519,7 @@ function fallbackStepsForDish(dish = {}) {
 }
 
 function recipeGuideLabel(source) {
-  if (source === "qwen") return "千问整理的参考做法";
+  if (source === "qwen") return "参考做法";
   if (source === "local") return "家庭参考做法";
   return "小程序内做法";
 }

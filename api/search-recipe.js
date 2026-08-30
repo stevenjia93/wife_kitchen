@@ -182,7 +182,7 @@ async function ensureInAppRecipeGuide(recipe, query) {
       searchRating: recipe.searchRating || 0,
       searchCookedCount: recipe.searchCookedCount || 0,
       guideSource: "qwen",
-      note: `${recipe.note || "已匹配高分菜谱。"} 以下为千问整理的家庭参考做法。`.slice(0, 160)
+      note: `${recipe.note || "已匹配高分菜谱。"} 以下为小程序整理的家庭参考做法。`.slice(0, 160)
     };
   } catch (error) {
     console.warn("Recipe guide generation fell back to local steps:", error.message || error);
@@ -219,14 +219,14 @@ async function generateRecipeGuide(recipe, query) {
     })
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error?.message || payload.message || "千问菜谱整理失败");
+  if (!response.ok) throw new Error(payload.error?.message || payload.message || "菜谱整理失败");
   const content = payload.choices?.[0]?.message?.content;
   const responseText = Array.isArray(content) ? content.map((item) => item.text || "").join("") : content;
   const parsed = parseJsonText(responseText);
   const ingredients = normalizeStringList(parsed.ingredients, 32);
   const stepDetails = normalizeGeneratedStepDetails(parsed.steps, extractImageUrls(responseText));
   const steps = stepDetails.map((step) => step.text).filter(Boolean);
-  if (ingredients.length < 2 || steps.length < 3) throw new Error("千问菜谱内容不完整");
+  if (ingredients.length < 2 || steps.length < 3) throw new Error("菜谱内容不完整");
   return {
     name: cleanText(parsed.name || recipe?.name || query).slice(0, 40),
     time: Math.max(5, Math.min(180, Math.round(Number(parsed.time) || Number(recipe?.time) || 20))),
@@ -334,7 +334,7 @@ function parseJsonText(value) {
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     if (start >= 0 && end > start) return JSON.parse(text.slice(start, end + 1));
-    throw new Error("千问菜谱返回格式不正确");
+    throw new Error("菜谱返回格式不正确");
   }
 }
 

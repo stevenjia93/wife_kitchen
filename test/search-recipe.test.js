@@ -84,7 +84,8 @@ test("uses Qwen to complete a matched recipe without readable steps", async () =
     }, "番茄炒蛋");
     assert.equal(recipe.guideSource, "qwen");
     assert.equal(recipe.steps.length, 4);
-    assert.match(recipe.note, /千问整理/);
+    assert.match(recipe.note, /小程序整理/);
+    assert.doesNotMatch(recipe.note, /千问|Qwen/i);
   } finally {
     global.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.DASHSCOPE_API_KEY;
