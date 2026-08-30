@@ -231,6 +231,7 @@ function createDefaultState() {
     feedback: {},
     checkedItems: {},
     shoppingGroupCollapsed: {},
+    preferredMeals: [...mealOrder],
     photoAnalysisUsage: { dateKey: todayKey(), count: 0 }
   };
 }
@@ -244,6 +245,7 @@ function normalizeAppState(value) {
     feedback: value && typeof value.feedback === "object" ? value.feedback : {},
     checkedItems: value && typeof value.checkedItems === "object" ? value.checkedItems : {},
     shoppingGroupCollapsed: value && typeof value.shoppingGroupCollapsed === "object" ? value.shoppingGroupCollapsed : {},
+    preferredMeals: normalizeMealKeys(value && value.preferredMeals),
     photoAnalysisUsage: normalizeDailyPhotoAnalysisUsage(value && value.photoAnalysisUsage),
     plans: {
       ...base.plans,
@@ -265,9 +267,17 @@ function normalizeDish(dish) {
   return {
     ...dish,
     id,
+    meals: normalizeMealKeys(dish.meals, base.meals || mealOrder),
     image,
     imageUrl: String(dish.imageUrl || image || "").trim()
   };
+}
+
+function normalizeMealKeys(value, fallback = mealOrder) {
+  const source = Array.isArray(value) ? value : fallback;
+  const normalized = mealOrder.filter((meal) => source.includes(meal));
+  if (normalized.length) return normalized;
+  return mealOrder.filter((meal) => fallback.includes(meal));
 }
 
 function normalizePlan(plan) {
@@ -429,9 +439,21 @@ function elapsedMeals(plan, key, now = new Date()) {
   );
 }
 
-function actionableUnresolvedMeals(plan, key, now = new Date()) {
+function actionableUnresolvedMeals(plan, key, now = new Date(), preferredMeals = mealOrder) {
   const elapsed = new Set(elapsedMeals(plan, key, now));
-  return unresolvedMeals(plan).filter((meal) => !elapsed.has(meal));
+  const preferred = new Set(normalizeMealKeys(preferredMeals));
+  return unresolvedMeals(plan).filter((meal) => preferred.has(meal) && !elapsed.has(meal));
+}
+
+function applyPreferredMealSkips(plan, preferredMeals) {
+  const preferred = new Set(normalizeMealKeys(preferredMeals));
+  mealOrder.forEach((meal) => {
+    if (!preferred.has(meal) && mealItemCount(plan, meal) === 0) {
+      plan.skipped[meal] = true;
+      plan.reopened[meal] = false;
+    }
+  });
+  return plan;
 }
 
 function hasPlanActivity(plan) {
@@ -614,6 +636,7 @@ module.exports = {
   emptyPlan,
   createDefaultState,
   normalizeAppState,
+  normalizeMealKeys,
   normalizePlan,
   normalizeMealPhoto,
   normalizeMealAnalysis,
@@ -629,6 +652,7 @@ module.exports = {
   isMealTimeElapsed,
   elapsedMeals,
   actionableUnresolvedMeals,
+  applyPreferredMealSkips,
   hasPlanActivity,
   canViewOrder,
   canUploadMealPhotos,

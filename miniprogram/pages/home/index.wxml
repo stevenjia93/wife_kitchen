@@ -94,6 +94,21 @@
 
       <block wx:else>
       <view class="panel pick-panel">
+        <view class="meal-preference-row">
+          <view class="meal-preference-copy">
+            <view class="mini-label">常用餐次</view>
+            <view class="subtitle">只展示勾选餐次，下单时自动跳过其他空餐次</view>
+          </view>
+          <view class="meal-choice-row">
+            <button
+              wx:for="{{preferredMealOptions}}"
+              wx:key="key"
+              class="meal-choice {{item.selected ? 'selected' : ''}}"
+              data-meal="{{item.key}}"
+              bindtap="togglePreferredMeal"
+            >{{item.label}}</button>
+          </view>
+        </view>
         <view class="meal-tabs">
           <button
             wx:for="{{mealTabs}}"
@@ -405,6 +420,15 @@
           </view>
           <button class="sheet-close" bindtap="closeMenuSheet">×</button>
         </view>
+        <view class="menu-filter-row">
+          <button
+            wx:for="{{menuMealFilterOptions}}"
+            wx:key="key"
+            class="menu-filter-chip {{item.selected ? 'selected' : ''}}"
+            data-meal="{{item.key}}"
+            bindtap="setMenuMealFilter"
+          >{{item.label}}</button>
+        </view>
         <scroll-view class="menu-list" scroll-y="true">
           <view class="menu-card-grid">
             <button
@@ -418,7 +442,7 @@
               <view wx:else class="menu-card-image placeholder">{{item.imageInitial}}</view>
               <view class="menu-card-body">
                 <view class="menu-card-title">{{item.name}}</view>
-                <view class="menu-card-meta">{{item.meta}}</view>
+                <view class="menu-card-meta">{{item.meta}} · {{item.mealText}}</view>
                 <view class="menu-card-action">{{item.selected ? '已选' : '加入'}}</view>
               </view>
             </button>
@@ -443,6 +467,22 @@
               <view class="pill">{{detailDish.category}}</view>
             </view>
             <view class="detail-note">{{detailDish.note}}</view>
+
+            <view wx:if="{{detailDish.canEditMeals}}" class="detail-section detail-meal-editor">
+              <view>
+                <view class="mini-label">适合餐次</view>
+                <view class="subtitle">可多选，仅用于点菜时筛选</view>
+              </view>
+              <view class="detail-meal-options">
+                <button
+                  wx:for="{{detailDish.mealOptions}}"
+                  wx:key="key"
+                  class="meal-choice {{item.selected ? 'selected' : ''}}"
+                  data-meal="{{item.key}}"
+                  bindtap="toggleDishMeal"
+                >{{item.label}}</button>
+              </view>
+            </view>
 
             <view class="detail-section">
               <view class="mini-label">原料</view>

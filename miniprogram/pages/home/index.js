@@ -19,6 +19,7 @@ const {
   isEditableDate,
   createDefaultState,
   normalizeAppState,
+  normalizeMealKeys,
   ensurePlan,
   activeDishes,
   getDish,
@@ -29,6 +30,7 @@ const {
   isMealTimeElapsed,
   elapsedMeals,
   actionableUnresolvedMeals,
+  applyPreferredMealSkips,
   canViewOrder,
   canUploadMealPhotos,
   aggregateShoppingList,
@@ -58,6 +60,7 @@ Page({
     dateKey: todayKey(),
     meal: "dinner",
     category: "全部",
+    menuMealFilter: "all",
     wishName: "",
     featuredIndex: 0,
     menuOpen: false,
@@ -199,15 +202,23 @@ Page({
   refreshView() {
     const dateKey = this.data.dateKey;
     const plan = ensurePlan(this.state, dateKey);
-    const elapsed = elapsedMeals(plan, dateKey);
+    const preferredMeals = normalizeMealKeys(this.state.preferredMeals);
+    const visibleMealKeys = mealOrder.filter(
+      (meal) => preferredMeals.includes(meal) || mealItemCount(plan, meal) > 0
+    );
+    const activeMeal = visibleMealKeys.includes(this.data.meal)
+      ? this.data.meal
+      : visibleMealKeys[0] || preferredMeals[0] || "dinner";
+    const elapsed = elapsedMeals(plan, dateKey).filter((meal) => visibleMealKeys.includes(meal));
     const elapsedSet = new Set(elapsed);
     const reopenedSet = new Set(
       mealOrder.filter(
         (meal) => plan.reopened[meal] && isMealTimeElapsed(meal, dateKey) && !plan.skipped[meal] && !mealItemCount(plan, meal)
       )
     );
-    const pending = actionableUnresolvedMeals(plan, dateKey);
-    const dishes = this.filteredDishes();
+    const pending = actionableUnresolvedMeals(plan, dateKey, new Date(), preferredMeals);
+    const dishes = this.filteredDishes(activeMeal);
+    const menuDishes = this.menuFilteredDishes();
     const featuredIndex = dishes.length ? Math.min(this.data.featuredIndex, dishes.length - 1) : 0;
     const activeDish = dishes[featuredIndex] || null;
     const orderVisible = canViewOrder(plan, dateKey);
@@ -223,7 +234,7 @@ Page({
     const photoBusy = (plan.afterPhotos || []).some(
       (photo) => photo.analysisStatus === "loading" || photo.shareStatus === "loading"
     );
-    const activeMealItems = this.buildMealItems(plan, this.data.meal);
+    const activeMealItems = this.buildMealItems(plan, activeMeal);
     const managedDishes = activeDishes(this.state)
       .slice()
       .sort((a, b) => (b.rating || 0) - (a.rating || 0) || String(a.name).localeCompare(String(b.name), "zh-CN"))
@@ -240,6 +251,7 @@ Page({
       showPhotoPanel: activeTab === "wife",
       dateTitle: dayLabel(dateKey),
       dateMeta: buildDateMeta(dateKey, plan, pending, elapsed),
+      meal: activeMeal,
       featuredIndex,
       editable: isEditableDate(dateKey),
       canSubmit: isEditableDate(dateKey) && !pending.length,
@@ -247,28 +259,41 @@ Page({
       orderStatus: plan.submitted ? `已下单 ${formatTime(plan.submittedAt)}` : pending.length ? "还有餐次未决定" : "可以下单了",
       submittedTimeText: formatTime(plan.submittedAt),
       confirmationItemCount: selectedDishCount(plan) + wishCount(plan),
-      mealTabs: mealOrder.map((meal) => ({
+      mealTabs: visibleMealKeys.map((meal) => ({
         key: meal,
         label: mealLabels[meal],
-        active: this.data.meal === meal,
+        active: activeMeal === meal,
         skipped: plan.skipped[meal],
         elapsed: elapsedSet.has(meal),
         reopened: reopenedSet.has(meal),
         count: mealItemCount(plan, meal)
       })),
-      activeMealLabel: mealLabels[this.data.meal],
-      activeMealSkipped: plan.skipped[this.data.meal],
-      activeMealElapsed: elapsedSet.has(this.data.meal),
-      activeMealReopened: reopenedSet.has(this.data.meal),
-      activeMealCount: mealItemCount(plan, this.data.meal),
+      preferredMealOptions: mealOrder.map((meal) => ({
+        key: meal,
+        label: mealLabels[meal],
+        selected: preferredMeals.includes(meal)
+      })),
+      menuMealFilterOptions: [
+        { key: "all", label: "全部", selected: this.data.menuMealFilter === "all" },
+        ...mealOrder.map((meal) => ({
+          key: meal,
+          label: mealLabels[meal],
+          selected: this.data.menuMealFilter === meal
+        }))
+      ],
+      activeMealLabel: mealLabels[activeMeal],
+      activeMealSkipped: plan.skipped[activeMeal],
+      activeMealElapsed: elapsedSet.has(activeMeal),
+      activeMealReopened: reopenedSet.has(activeMeal),
+      activeMealCount: mealItemCount(plan, activeMeal),
       activeMealItems,
       filteredDishes: dishes.map((dish, index) => this.buildDishThumb(dish, index, featuredIndex)),
-      menuDishes: dishes.map((dish) => this.buildMenuDish(dish, plan)),
+      menuDishes: menuDishes.map((dish) => this.buildMenuDish(dish, plan, activeMeal)),
       managedDishes,
-      activeDish: activeDish ? this.buildDishView(activeDish, plan) : null,
-      selectedCurrent: Boolean(activeDish && plan[this.data.meal].includes(activeDish.id)),
-      wifeMeals: this.buildWifeMeals(plan, elapsedSet),
-      husbandMeals: this.buildHusbandMeals(plan, elapsedSet),
+      activeDish: activeDish ? this.buildDishView(activeDish, plan, activeMeal) : null,
+      selectedCurrent: Boolean(activeDish && plan[activeMeal].includes(activeDish.id)),
+      wifeMeals: this.buildWifeMeals(plan, elapsedSet, visibleMealKeys),
+      husbandMeals: this.buildHusbandMeals(plan, elapsedSet, visibleMealKeys),
       canViewOrder: orderVisible,
       canViewMenu: orderVisible || hasMenuDraft,
       kitchenStatus: orderVisible ? "按餐次看菜、原料和做法。" : hasMenuDraft ? "这是当前草稿菜单，可以继续调整。" : "还没有设定菜单。",
@@ -302,8 +327,7 @@ Page({
     });
   },
 
-  filteredDishes() {
-    const meal = this.data.meal;
+  filteredDishes(meal = this.data.meal) {
     const category = this.data.category;
     return activeDishes(this.state)
       .filter((dish) => dish.meals.includes(meal))
@@ -311,7 +335,16 @@ Page({
       .sort((a, b) => (b.rating || 0) - (a.rating || 0) || (a.time || 0) - (b.time || 0));
   },
 
-  buildDishView(dish, plan) {
+  menuFilteredDishes() {
+    const filter = this.data.menuMealFilter;
+    const category = this.data.category;
+    return activeDishes(this.state)
+      .filter((dish) => filter === "all" || dish.meals.includes(filter))
+      .filter((dish) => category === "全部" || dish.category === category)
+      .sort((a, b) => (b.rating || 0) - (a.rating || 0) || (a.time || 0) - (b.time || 0));
+  },
+
+  buildDishView(dish, plan, activeMeal = this.data.meal) {
     return {
       ...dish,
       imageSrc: dishImageSrc(dish),
@@ -319,7 +352,7 @@ Page({
       ingredientText: (dish.ingredients || []).map(formatIngredient).slice(0, 8).join("、"),
       stepText: (dish.steps || []).slice(0, 3).join(" / "),
       palette: categoryClass(dish.category),
-      selected: plan[this.data.meal].includes(dish.id)
+      selected: plan[activeMeal].includes(dish.id)
     };
   },
 
@@ -334,7 +367,7 @@ Page({
     };
   },
 
-  buildMenuDish(dish, plan) {
+  buildMenuDish(dish, plan, activeMeal = this.data.meal) {
     return {
       id: dish.id,
       name: dish.name,
@@ -343,7 +376,8 @@ Page({
       imageSrc: dishImageSrc(dish),
       imageInitial: dish.name.slice(0, 1),
       ingredientText: (dish.ingredients || []).map(formatIngredient).slice(0, 6).join("、"),
-      selected: (plan[this.data.meal] || []).includes(dish.id)
+      mealText: (dish.meals || []).map((meal) => mealLabels[meal]).join(" / "),
+      selected: (plan[activeMeal] || []).includes(dish.id)
     };
   },
 
@@ -373,8 +407,8 @@ Page({
     return [...dishes, ...wishes];
   },
 
-  buildWifeMeals(plan, elapsedSet = new Set()) {
-    return mealOrder.map((meal) => {
+  buildWifeMeals(plan, elapsedSet = new Set(), visibleMealKeys = mealOrder) {
+    return visibleMealKeys.map((meal) => {
       const ids = plan[meal] || [];
       const wishes = wishesForMeal(plan, meal);
       return {
@@ -401,8 +435,8 @@ Page({
     });
   },
 
-  buildHusbandMeals(plan, elapsedSet = new Set()) {
-    return mealOrder.map((meal) => {
+  buildHusbandMeals(plan, elapsedSet = new Set(), visibleMealKeys = mealOrder) {
+    return visibleMealKeys.map((meal) => {
       const ids = plan[meal] || [];
       const wishes = wishesForMeal(plan, meal);
       return {
@@ -468,7 +502,7 @@ Page({
     return {
       id: dish.id,
       name: dish.name,
-      meta: `${dish.category || "家常菜"} · ${dish.time || 20} 分钟`,
+      meta: `${dish.category || "家常菜"} · ${dish.time || 20} 分钟 · ${(dish.meals || []).map((meal) => mealLabels[meal]).join("/")}`,
       imageSrc: dishImageSrc(dish),
       imageInitial: dish.name.slice(0, 1),
       ingredientText: (dish.ingredients || []).map(formatIngredient).slice(0, 6).join("、") || "还没有原料清单",
@@ -476,19 +510,27 @@ Page({
     };
   },
 
-  buildDishDetail(dish) {
+  buildDishDetail(dish, options = {}) {
     const steps = dishStepItems(dish);
     const visibleSteps = steps.length ? steps : fallbackStepsForDish(dish);
+    const meals = normalizeMealKeys(dish.meals);
     return {
       id: dish.id,
       name: dish.name,
       category: dish.category || "家常菜",
-      meta: `${dish.time || 20} 分钟 · ${dish.difficulty || "家常"} · ${(dish.meals || []).map((meal) => mealLabels[meal]).join("/")}`,
+      meta: `${dish.time || 20} 分钟 · ${dish.difficulty || "家常"}`,
       note: dish.note || "按家里口味调整。",
       imageSrc: dishImageSrc(dish),
       imageInitial: dish.name.slice(0, 1),
       sourceUrl: dish.sourceUrl || "",
       canRefreshImages: dishNeedsStepImageRefresh(dish),
+      canEditMeals:
+        options.canEditMeals !== false && this.data.activeTab === "menu" && Boolean(getDish(this.state, dish.id)),
+      mealOptions: mealOrder.map((meal) => ({
+        key: meal,
+        label: mealLabels[meal],
+        selected: meals.includes(meal)
+      })),
       guideLabel: recipeGuideLabel(dish.guideSource),
       ingredients: (dish.ingredients || []).map((item) => ({ text: formatIngredient(item) })),
       steps: visibleSteps.map((step, index) => ({
@@ -741,6 +783,18 @@ Page({
     this.setData({ meal: event.currentTarget.dataset.meal || "dinner", featuredIndex: 0 }, () => this.refreshView());
   },
 
+  togglePreferredMeal(event) {
+    const meal = event.currentTarget.dataset.meal;
+    if (!mealOrder.includes(meal)) return;
+    const current = normalizeMealKeys(this.state.preferredMeals);
+    const selected = current.includes(meal);
+    if (selected && current.length === 1) return showToast("至少保留一个常用餐次");
+    this.state.preferredMeals = selected
+      ? current.filter((item) => item !== meal)
+      : mealOrder.filter((item) => current.includes(item) || item === meal);
+    this.persistState();
+  },
+
   setCategory(event) {
     this.setData({ category: event.currentTarget.dataset.category || "全部", featuredIndex: 0 }, () => this.refreshView());
   },
@@ -795,11 +849,17 @@ Page({
   openMenuSheet() {
     if (!isEditableDate(this.data.dateKey)) return showToast("历史日期只能查看");
     if (this.data.activeMealSkipped) return showToast("这餐已跳过，先恢复点餐");
-    this.setData({ menuOpen: true }, () => this.refreshView());
+    this.setData({ menuOpen: true, menuMealFilter: "all" }, () => this.refreshView());
   },
 
   closeMenuSheet() {
     this.setData({ menuOpen: false });
+  },
+
+  setMenuMealFilter(event) {
+    const filter = event.currentTarget.dataset.meal || "all";
+    if (filter !== "all" && !mealOrder.includes(filter)) return;
+    this.setData({ menuMealFilter: filter }, () => this.refreshView());
   },
 
   addDishFromMenu(event) {
@@ -887,7 +947,22 @@ Page({
     dish.meals = [found.wish.meal];
     dish.note = found.wish.recipe.note || "根据高分菜谱整理的家庭参考做法。";
     dish.guideSource = found.wish.recipe.guideSource || "";
-    this.setData({ detailOpen: true, detailDish: this.buildDishDetail(dish) });
+    this.setData({ detailOpen: true, detailDish: this.buildDishDetail(dish, { canEditMeals: false }) });
+  },
+
+  toggleDishMeal(event) {
+    const dishId = this.data.detailDish?.id;
+    const meal = event.currentTarget.dataset.meal;
+    const dish = getDish(this.state, dishId);
+    if (!dish || !mealOrder.includes(meal)) return;
+    const current = normalizeMealKeys(dish.meals);
+    const selected = current.includes(meal);
+    if (selected && current.length === 1) return showToast("至少选择一个适合餐次");
+    dish.meals = selected
+      ? current.filter((item) => item !== meal)
+      : mealOrder.filter((item) => current.includes(item) || item === meal);
+    this.persistState();
+    this.setData({ detailDish: this.buildDishDetail(getDish(this.state, dishId)) });
   },
 
   closeDishDetail() {
@@ -1131,7 +1206,9 @@ Page({
   submitOrder() {
     if (!isEditableDate(this.data.dateKey)) return showToast("历史日期只能查看");
     const plan = ensurePlan(this.state, this.data.dateKey);
-    const pending = actionableUnresolvedMeals(plan, this.data.dateKey);
+    const preferredMeals = normalizeMealKeys(this.state.preferredMeals);
+    applyPreferredMealSkips(plan, preferredMeals);
+    const pending = actionableUnresolvedMeals(plan, this.data.dateKey, new Date(), preferredMeals);
     if (pending.length) return showToast(`还有 ${pending.map((meal) => mealLabels[meal]).join("、")} 未决定`);
     plan.submitted = true;
     plan.submittedAt = new Date().toISOString();
