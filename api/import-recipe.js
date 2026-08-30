@@ -3,6 +3,7 @@ const MAX_IMAGE_BYTES = 700_000;
 const MAX_STEP_IMAGE_BYTES = 220_000;
 const MAX_STEP_IMAGES = 20;
 const MAX_STEP_ITEMS = 32;
+const RECIPE_API_FETCH_TIMEOUT_MS = 8000;
 const PAGE_FETCH_TIMEOUT_MS = 8000;
 const READABLE_FETCH_TIMEOUT_MS = 15000;
 const IMAGE_FETCH_TIMEOUT_MS = 3500;
@@ -79,6 +80,15 @@ async function importRecipeFromUrl(rawUrl, options = {}) {
 }
 
 async function fetchAndParseRecipe(sourceUrl, options = {}) {
+  const recipeId = extractRecipeId(sourceUrl);
+  if (recipeId) {
+    try {
+      return await fetchRecipeFromPublicApi(recipeId, sourceUrl, options);
+    } catch {
+      // Keep the page parsers as fallbacks in case the public JSON response changes.
+    }
+  }
+
   try {
     const response = await fetch(sourceUrl, {
       headers: {
@@ -101,6 +111,73 @@ async function fetchAndParseRecipe(sourceUrl, options = {}) {
       throw directError.statusCode ? directError : httpError("菜谱页面暂时无法读取", 502);
     }
   }
+}
+
+async function fetchRecipeFromPublicApi(recipeId, sourceUrl, options = {}) {
+  const apiUrl = new URL("https://www.xiachufang.com/juno/api/v2/recipes/lookup.json");
+  apiUrl.searchParams.set("id", recipeId);
+  const response = await fetch(apiUrl, {
+    headers: {
+      "user-agent": USER_AGENT,
+      accept: "application/json",
+      "accept-language": "zh-CN,zh;q=0.9,en;q=0.5"
+    },
+    signal: timeoutSignal(options.recipeApiTimeoutMs || RECIPE_API_FETCH_TIMEOUT_MS)
+  });
+  if (!response.ok) throw httpError("菜谱数据暂时无法读取", 502);
+  return parseRecipeApiPayload(await response.json(), sourceUrl, recipeId);
+}
+
+function parseRecipeApiPayload(payload, sourceUrl, recipeId = "") {
+  const recipes = Array.isArray(payload?.content?.recipes) ? payload.content.recipes : [];
+  const recipe = recipes.find((item) => String(item?.id || "") === String(recipeId || "")) || recipes[0];
+  if (payload?.status !== "ok" || !recipe) throw httpError("菜谱数据暂时无法读取", 502);
+
+  const ingredients = (Array.isArray(recipe.ingredient) ? recipe.ingredient : [])
+    .map((item) => {
+      if (typeof item === "string") return cleanText(item);
+      return cleanText(`${item?.name || ""} ${item?.amount || ""}`);
+    })
+    .filter(Boolean)
+    .slice(0, 40);
+  const stepDetails = (Array.isArray(recipe.instruction) ? recipe.instruction : [])
+    .map((step) => ({
+      text: cleanStepText(step?.text || ""),
+      image: recipeApiImageUrl(step?.photo800 || step?.url || step?.image, sourceUrl, 800, 600)
+    }))
+    .filter((step) => step.text || step.image)
+    .slice(0, MAX_STEP_ITEMS);
+  const duration = parseDurationMinutes(recipe?.duration?.text || recipe?.duration || "");
+
+  return {
+    name: cleanRecipeTitle(recipe.name || "新菜谱"),
+    sourceUrl,
+    image: recipeApiImageUrl(recipe.image, sourceUrl, 800, 600),
+    time: duration || 20,
+    ingredients,
+    steps: stepDetails.map((step) => step.text).filter(Boolean),
+    stepDetails,
+    note: cleanText(recipe.desc || recipe.summary || "").slice(0, 120)
+  };
+}
+
+function extractRecipeId(sourceUrl) {
+  try {
+    return new URL(sourceUrl).pathname.match(/\/recipe\/(\d+)/)?.[1] || "";
+  } catch {
+    return "";
+  }
+}
+
+function recipeApiImageUrl(value, sourceUrl, width, height) {
+  const raw = typeof value === "string"
+    ? value
+    : value?.url || value?.url_pattern || value?.photo800 || "";
+  const materialized = String(raw || "")
+    .replace(/\{width\}/g, String(width))
+    .replace(/\{height\}/g, String(height))
+    .replace(/\{format\}/g, "jpg");
+  return absoluteUrl(materialized, sourceUrl);
 }
 
 async function fetchReadableRecipeMarkdown(sourceUrl, options = {}) {
@@ -497,8 +574,10 @@ module.exports = handler;
 module.exports._internals = {
   importRecipeFromUrl,
   parseRecipePage,
+  parseRecipeApiPayload,
   parseReadableRecipeMarkdown,
   normalizeSourceUrl,
+  extractRecipeId,
   fetchImageDataUrl,
   extractStepDetails,
   extractMarkdownStepDetails,

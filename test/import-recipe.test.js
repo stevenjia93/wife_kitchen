@@ -78,12 +78,84 @@ ${steps}
   assert.match(recipe.stepDetails[29].text, /第 30 步/);
 });
 
+test("parses all illustrated steps from the Xiachufang public JSON response", () => {
+  const instructions = Array.from({ length: 30 }, (_, index) => ({
+    step: String(index),
+    text: `第 ${index + 1} 步`,
+    image: {
+      url_pattern: `https://i2.chuimg.com/step-${index + 1}.jpg?imageView2/1/w/{width}/h/{height}/q/75/format/{format}`
+    }
+  }));
+  const recipe = _internals.parseRecipeApiPayload({
+    status: "ok",
+    content: {
+      recipes: [{
+        id: "100449129",
+        name: "葱烧海参",
+        desc: "图文菜谱",
+        ingredient: [
+          { name: "干海参", amount: "3根" },
+          { name: "葱白", amount: "8段" }
+        ],
+        image: {
+          url_pattern: "https://i2.chuimg.com/cover.jpg?imageView2/1/w/{width}/h/{height}/q/75/format/{format}"
+        },
+        instruction: instructions
+      }]
+    }
+  }, "https://m.xiachufang.com/recipe/100449129/", "100449129");
+
+  assert.equal(recipe.name, "葱烧海参");
+  assert.deepEqual(recipe.ingredients, ["干海参 3根", "葱白 8段"]);
+  assert.equal(recipe.stepDetails.length, 30);
+  assert.equal(recipe.stepDetails[0].image, "https://i2.chuimg.com/step-1.jpg?imageView2/1/w/800/h/600/q/75/format/jpg");
+  assert.equal(recipe.stepDetails[29].image, "https://i2.chuimg.com/step-30.jpg?imageView2/1/w/800/h/600/q/75/format/jpg");
+});
+
+test("prefers the public JSON response before fetching the blocked page", async () => {
+  const originalFetch = global.fetch;
+  const requestedUrls = [];
+  global.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    return {
+      ok: true,
+      json: async () => ({
+        status: "ok",
+        content: {
+          recipes: [{
+            id: "100449129",
+            name: "葱烧海参",
+            ingredient: [{ name: "干海参", amount: "3根" }],
+            instruction: [{
+              text: "泡发海参。",
+              photo800: "https://i2.chuimg.com/step-1.jpg"
+            }]
+          }]
+        }
+      })
+    };
+  };
+
+  try {
+    const recipe = await _internals.importRecipeFromUrl(
+      "https://www.xiachufang.com/recipe/100449129/",
+      { includeImages: false, includeStepImages: false }
+    );
+    assert.equal(requestedUrls.length, 1);
+    assert.equal(requestedUrls[0], "https://www.xiachufang.com/juno/api/v2/recipes/lookup.json?id=100449129");
+    assert.equal(recipe.stepDetails[0].image, "");
+    assert.equal(recipe.stepDetails[0].imageUrl, "https://i2.chuimg.com/step-1.jpg");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("uses the readable public-page fallback when Xiachufang blocks the server", async () => {
   const originalFetch = global.fetch;
   const requestedUrls = [];
   global.fetch = async (url) => {
     requestedUrls.push(String(url));
-    if (requestedUrls.length === 1) return { ok: false, status: 403 };
+    if (requestedUrls.length <= 2) return { ok: false, status: 403 };
     return {
       ok: true,
       text: async () => `
@@ -104,8 +176,9 @@ Title: 葱烧海参
       "https://www.xiachufang.com/recipe/100449129/",
       { includeImages: false, includeStepImages: false }
     );
-    assert.match(requestedUrls[0], /^https:\/\/m\.xiachufang\.com\/recipe\/100449129\//);
-    assert.equal(requestedUrls[1], "https://r.jina.ai/http://www.xiachufang.com/recipe/100449129/");
+    assert.equal(requestedUrls[0], "https://www.xiachufang.com/juno/api/v2/recipes/lookup.json?id=100449129");
+    assert.match(requestedUrls[1], /^https:\/\/m\.xiachufang\.com\/recipe\/100449129\//);
+    assert.equal(requestedUrls[2], "https://r.jina.ai/http://www.xiachufang.com/recipe/100449129/");
     assert.equal(recipe.stepDetails.length, 3);
     assert.equal(recipe.stepDetails[0].image, "");
     assert.equal(recipe.stepDetails[0].imageUrl, "https://i2.chuimg.com/step-1.jpg");
