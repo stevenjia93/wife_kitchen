@@ -1177,21 +1177,13 @@
 
 .managed-dish {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12rpx;
+  align-items: center;
+  gap: 16rpx;
   margin-top: 12rpx;
   border: 1rpx solid rgba(22, 24, 23, 0.09);
   border-radius: 16rpx;
   background: rgba(255, 255, 255, 0.58);
   padding: 14rpx;
-}
-
-.managed-main {
-  display: flex;
-  align-items: flex-start;
-  gap: 16rpx;
-  min-width: 0;
 }
 
 .managed-thumb {
@@ -1207,17 +1199,16 @@
   color: #6d756e;
   font-size: 22rpx;
   line-height: 1.35;
-  display: -webkit-box;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.managed-actions {
-  display: flex;
-  align-items: center;
-  gap: 10rpx;
-  padding-left: 134rpx;
+.managed-dish .order-name,
+.managed-dish .subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .source-btn {
@@ -1230,39 +1221,16 @@
   font-weight: 900;
 }
 
-.managed-source-btn {
-  flex: 1 1 auto;
-  width: auto;
-  min-height: 54rpx;
-  border-radius: 12rpx;
-  background: rgba(70, 116, 87, 0.12);
-  color: #467457;
-  font-size: 22rpx;
-  font-weight: 900;
-}
-
-.source-empty {
-  box-sizing: border-box;
-  flex: 1 1 auto;
-  min-height: 54rpx;
-  border-radius: 12rpx;
-  background: rgba(22, 24, 23, 0.04);
-  color: #8a918b;
-  font-size: 22rpx;
-  font-weight: 800;
-  line-height: 54rpx;
-  text-align: center;
-}
-
 .delete-menu-btn {
   display: grid;
   box-sizing: border-box;
-  width: 48rpx;
-  min-width: 48rpx;
-  max-width: 48rpx;
-  height: 48rpx;
-  min-height: 48rpx;
-  max-height: 48rpx;
+  flex: 0 0 56rpx;
+  width: 56rpx;
+  min-width: 56rpx;
+  max-width: 56rpx;
+  height: 56rpx;
+  min-height: 56rpx;
+  max-height: 56rpx;
   place-items: center;
   border: 1rpx solid rgba(227, 90, 70, 0.22);
   border-radius: 10rpx;

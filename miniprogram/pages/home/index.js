@@ -297,7 +297,7 @@ Page({
             : "上传整桌照",
       uploadPhotoHint: photoAttemptsRemaining <= 0
         ? "每天最多识别 3 次，明天会自动恢复"
-        : "上传只做识别；确认照片后再手动生成分享图",
+        : "先展示热量识别，随后自动生成分享图",
       photos
     });
   },
@@ -1340,6 +1340,7 @@ Page({
         shareStatus: "idle",
         shareError: ""
       });
+      await this.generateMealSharePhoto(photoId, { image, analysis: payload.analysis, quiet: true });
     } catch (error) {
       const latestPlan = ensurePlan(this.state, this.data.dateKey);
       if (/照片识别已用完/.test(String(error.message || ""))) {
@@ -1371,8 +1372,6 @@ Page({
   },
 
   async generateSharePhoto(event) {
-    const consented = await this.confirmAiPhotoProcessing("开始生成");
-    if (!consented) return;
     this.generateMealSharePhoto(event.currentTarget.dataset.id);
   },
 

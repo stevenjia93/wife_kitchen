@@ -236,7 +236,7 @@ function buildShareImageRequest(image, analysis) {
       n: 1,
       size: process.env.DASHSCOPE_IMAGE_SIZE || `${SHARE_IMAGE_WIDTH}*${SHARE_IMAGE_HEIGHT}`,
       negative_prompt:
-        "乱码，错误汉字，错误数字，二维码，水印，品牌标志，新增菜品，替换食物，卡通插画，塑料质感，过度磨皮，机器视觉检测框，黄色滤镜，棕色滤镜，复古滤镜，暗角，压暗照片，过度饱和，改变食物颜色",
+        "乱码，错误汉字，错误数字，二维码，水印，品牌标志，新增菜品，替换食物，卡通插画，塑料质感，过度磨皮，机器视觉检测框，粗大闭合圆圈，跨越多个物体的套圈，过密线条，遮挡食物的标签框，黄色滤镜，棕色滤镜，复古滤镜，暗角，压暗照片，过度饱和，改变食物颜色，模糊，低清晰度",
       watermark: false
     }
   };
@@ -249,17 +249,17 @@ function buildShareImagePrompt(analysis) {
     .join("\n");
 
   return `
-把这张餐桌照片编辑成竖版 4:5、可以发小红书的自然手绘美食日记。保留原始食物、餐具、桌面和主要构图，不要替换菜品，不要新增不存在的食物，不要把照片变成插画。
+把这张餐桌照片精修成竖版 4:5、可以直接发小红书的高质量自然手绘美食日记。它首先必须仍然是一张真实、清晰的手机美食照片：保留原始食物，原图中的餐具、桌面、人物和主要构图都保持不变，不替换菜品，不新增不存在的食物，不把照片变成插画。
 
 视觉要求：
-1. 严格保留原照片的自然白平衡、曝光和真实食物颜色，只允许轻微提亮与增加清晰度。禁止全局偏黄、偏橙、偏棕、偏绿、复古胶片、暗角、压暗或高饱和滤镜。
-2. 首要任务是逐个描绘物体轮廓：用白色细笔沿每个盘子、碗、杯子、饮料和主要食物的真实外边缘紧贴描线，不是画矩形框，也不是只在旁边画装饰。
-3. 每个主要物体至少有一条连续、略不均匀的一笔画白线；重点物体再加一条轻微错位的断续重复线。轮廓必须能让人一眼看出对应的是哪个物体。
-4. 从轮廓附近向桌面空白处画短箭头或虚线作为视线引导，箭头不能横穿或遮挡其他食物。
-5. 只在空白处适量加入热气、闪光、爱心、星星、小表情和波浪线，保留空白，不要过度装饰。
+1. 原图观感至少保留 95%。严格保留自然白平衡、曝光、真实食物颜色和人物肤色，只允许非常轻微的提亮、降噪和锐化。禁止全局偏黄、偏橙、偏棕、偏绿、复古胶片、暗角、压暗或高饱和滤镜。
+2. 首要任务是逐个描绘物体轮廓：用视觉上约 2–4 像素的白色细笔，沿每个盘子、碗、杯子、饮料和主要食物的真实外边缘紧贴描线。线条要像白色签字笔的一笔画，随性、略不均匀，但边缘清楚。
+3. 禁止用粗大的闭合圆圈、椭圆或矩形把菜品套住，禁止一个轮廓跨越多个盘子。每条轮廓只能对应一个真实物体；重点物体可加一条轻微错位、较短的断续重复线。
+4. 从轮廓附近向最近的桌面空白处画短箭头或虚线，箭头不能横穿、遮挡或切割其他食物，也不要延伸到画面另一侧。
+5. 只在明确的空白处适量加入热气、闪光、爱心、星星、小表情和波浪线；每个区域最多一两处，保持呼吸感，绝不堆满画面。
 6. 保持整张照片通透完整，只加入很细的手绘相框轮廓；不要制作顶部或底部的大色块、大白卡、深色信息面板或大面积半透明色块。
 7. 图中不要生成任何文字、数字、单位、二维码、水印或品牌标志；准确的菜名、日记短句和热量稍后由程序叠加。
-8. 手绘线不能改变食物数量、种类、份量和形状。最终效果应像用白色笔直接在真实照片上随手记录，而不是营养报告或商业海报。
+8. 手绘线不能改变食物数量、种类、份量和形状。输出必须高清、线条干净、食物细节清晰，最终效果像用白色笔直接在真实照片上做精致的日系手账记录，而不是营养报告、机器检测图或商业海报。
 
 画面内容参考（仅用于构图，不得渲染成文字）：总计约 ${analysis.totalCalories} kcal；${itemLines || "一份家庭餐"}。
 `.trim();
@@ -280,13 +280,17 @@ async function composeShareCard(imageBuffer, analysis) {
     .rotate()
     .resize(SHARE_IMAGE_WIDTH, SHARE_IMAGE_HEIGHT, { fit: "cover" })
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
-    .jpeg({ quality: 88, chromaSubsampling: "4:4:4" })
+    .jpeg({ quality: 92, chromaSubsampling: "4:4:4" })
     .toBuffer();
 }
 
 function buildShareOverlaySvg(analysis) {
   const items = (analysis.items || [])
-    .slice(0, 6)
+    .filter((item) => {
+      const box = normalizeBox(item.bbox);
+      return box.width <= 0.72 && box.height <= 0.72;
+    })
+    .slice(0, 5)
     .sort((a, b) => normalizeBox(a.bbox).y - normalizeBox(b.bbox).y);
   const lastBubbleY = { left: 175, right: 175 };
   const bubbles = items
@@ -298,7 +302,7 @@ function buildShareOverlaySvg(analysis) {
         300,
         SHARE_IMAGE_HEIGHT - 100
       );
-      const bubbleWidth = clampInt(230 + cleanText(item.label).length * 18, 310, 390);
+      const bubbleWidth = clampInt(220 + cleanText(item.label).length * 16, 280, 350);
       const bubbleOnLeft = targetX === SHARE_IMAGE_WIDTH / 2 ? index % 2 === 0 : targetX < SHARE_IMAGE_WIDTH / 2;
       const horizontalDirection = bubbleOnLeft ? 1 : -1;
       const bubbleCenterX = bubbleOnLeft ? bubbleWidth / 2 + 38 : SHARE_IMAGE_WIDTH - bubbleWidth / 2 - 38;
@@ -311,17 +315,7 @@ function buildShareOverlaySvg(analysis) {
       const rotation = [-2, 1.5, -1, 2, -1.5, 1][index];
       const label = escapeXml(item.label);
       const diaryNote = escapeXml(shareDiaryNote(item.label, index));
-      const outlineX = clampInt(box.x * SHARE_IMAGE_WIDTH - 13, 24, SHARE_IMAGE_WIDTH - 80);
-      const outlineY = clampInt(box.y * SHARE_IMAGE_HEIGHT - 13, 70, SHARE_IMAGE_HEIGHT - 100);
-      const outlineWidth = clampInt(box.width * SHARE_IMAGE_WIDTH + 26, 90, SHARE_IMAGE_WIDTH - outlineX - 24);
-      const outlineHeight = clampInt(box.height * SHARE_IMAGE_HEIGHT + 26, 80, SHARE_IMAGE_HEIGHT - outlineY - 30);
-      const right = outlineX + outlineWidth;
-      const bottom = outlineY + outlineHeight;
       return `
-        <g class="object-contour">
-          <path d="M ${outlineX + outlineWidth * 0.18} ${outlineY} C ${outlineX + outlineWidth * 0.48} ${outlineY - 8}, ${outlineX + outlineWidth * 0.78} ${outlineY + 5}, ${right - 6} ${outlineY + outlineHeight * 0.23} C ${right + 8} ${outlineY + outlineHeight * 0.52}, ${right - 4} ${outlineY + outlineHeight * 0.8}, ${outlineX + outlineWidth * 0.72} ${bottom} C ${outlineX + outlineWidth * 0.42} ${bottom + 8}, ${outlineX + outlineWidth * 0.14} ${bottom - 4}, ${outlineX + 3} ${outlineY + outlineHeight * 0.72} C ${outlineX - 7} ${outlineY + outlineHeight * 0.42}, ${outlineX + 2} ${outlineY + outlineHeight * 0.14}, ${outlineX + outlineWidth * 0.18} ${outlineY} Z"/>
-          <path class="echo" d="M ${outlineX + outlineWidth * 0.2} ${outlineY + 8} C ${outlineX + outlineWidth * 0.5} ${outlineY}, ${outlineX + outlineWidth * 0.8} ${outlineY + 12}, ${right - 13} ${outlineY + outlineHeight * 0.26} C ${right} ${outlineY + outlineHeight * 0.55}, ${right - 12} ${outlineY + outlineHeight * 0.78}, ${outlineX + outlineWidth * 0.7} ${bottom - 8} C ${outlineX + outlineWidth * 0.4} ${bottom}, ${outlineX + outlineWidth * 0.17} ${bottom - 12}, ${outlineX + 11} ${outlineY + outlineHeight * 0.69}"/>
-        </g>
         <path class="doodle-arrow" d="M ${bubbleCenterX - horizontalDirection * (bubbleWidth * 0.34)} ${bubbleCenterY + 25} C ${bubbleCenterX - horizontalDirection * (bubbleWidth * 0.54)} ${bubbleCenterY + 47}, ${targetX + horizontalDirection * 32} ${targetY - 24}, ${targetX} ${targetY}" marker-end="url(#arrowhead)"/>
         <g class="meal-bubble" transform="rotate(${rotation} ${bubbleCenterX} ${bubbleCenterY})">
           <path d="M ${x + 22} ${y + 5} Q ${x + bubbleWidth * 0.48} ${y - 3} ${x + bubbleWidth - 18} ${y + 5} Q ${x + bubbleWidth + 3} ${y + 31} ${x + bubbleWidth - 3} ${y + 91} Q ${x + bubbleWidth - 17} ${y + 111} ${x + 27} ${y + 106} Q ${x - 4} ${y + 97} ${x + 3} ${y + 27} Q ${x + 8} ${y + 10} ${x + 22} ${y + 5} Z"/>
@@ -346,9 +340,7 @@ function buildShareOverlaySvg(analysis) {
       .meal-bubble{filter:url(#bubble-shadow)}.meal-bubble path{fill:#121713;fill-opacity:0.05;stroke:#FFFDF7;stroke-width:3px;stroke-linejoin:round}
       .item-label,.item-note,.item-kcal{text-anchor:middle;paint-order:stroke;stroke:#172019;stroke-width:3px;stroke-linejoin:round}
       .item-label{font-size:29px;fill:#FFFFFF}.item-note{font-size:21px;fill:#FFFDF7}.item-kcal{font-size:24px;fill:#FFE3A5}
-      .doodle-arrow{fill:none;stroke:#FFFDF7;stroke-width:4px;stroke-linecap:round;stroke-dasharray:10 9;filter:url(#ink-shadow)}
-      .object-contour{fill:none;stroke:#FFFDF7;stroke-width:5px;stroke-linecap:round;stroke-linejoin:round;filter:url(#ink-shadow)}
-      .object-contour .echo{stroke-width:3px;stroke-dasharray:16 12;opacity:0.72}
+      .doodle-arrow{fill:none;stroke:#FFFDF7;stroke-width:3px;stroke-linecap:round;stroke-dasharray:10 9;filter:url(#ink-shadow)}
     </style>
     <rect width="${SHARE_IMAGE_WIDTH}" height="${SHARE_IMAGE_HEIGHT}" filter="url(#paper-grain)" opacity="0.018"/>
     <g fill="none" stroke="#FFFDF7" stroke-linecap="round" stroke-linejoin="round" filter="url(#ink-shadow)">

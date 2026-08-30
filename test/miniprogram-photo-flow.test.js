@@ -5,18 +5,23 @@ const path = require("node:path");
 
 const projectRoot = path.join(__dirname, "..");
 
-test("re-upload replaces the current photo and does not auto-generate a share image", () => {
+test("re-upload replaces the current photo and auto-generates a share image after recognition", () => {
   const source = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.js"), "utf8");
   assert.match(source, /plan\.afterPhotos = \[photo\]/);
   assert.match(source, /this\.analyzeMealPhoto\(photo\.id\)/);
-  assert.doesNotMatch(source, /autoShare\s*:\s*true/);
+  assert.match(source, /await this\.generateMealSharePhoto\(photoId, \{ image, analysis: payload\.analysis, quiet: true \}\)/);
+  assert.match(source, /async generateSharePhoto\(event\) \{\s*this\.generateMealSharePhoto/);
 });
 
-test("menu management keeps the description separate from source and delete actions", () => {
+test("menu management keeps image, copy and delete action in one row without a source button", () => {
   const template = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxml"), "utf8");
   const styles = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxss"), "utf8");
-  assert.match(template, /class="managed-main"/);
-  assert.match(template, />查看来源<\/button>/);
-  assert.match(styles, /\.managed-actions[\s\S]*padding-left: 134rpx/);
-  assert.match(styles, /\.managed-source-btn[\s\S]*flex: 1 1 auto/);
+  assert.match(template, /<view wx:for="\{\{managedDishes\}\}"[^>]*class="managed-dish"/);
+  assert.match(template, /class="managed-thumb/);
+  assert.match(template, /class="managed-copy"/);
+  assert.match(template, /class="delete-menu-btn"/);
+  assert.doesNotMatch(template, /查看来源|managed-source-btn/);
+  assert.match(styles, /\.managed-dish \{[\s\S]*align-items: center/);
+  assert.match(styles, /\.managed-ingredients \{[\s\S]*white-space: nowrap/);
+  assert.match(styles, /\.delete-menu-btn \{[\s\S]*width: 56rpx[\s\S]*height: 56rpx/);
 });

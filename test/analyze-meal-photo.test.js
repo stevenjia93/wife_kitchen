@@ -265,7 +265,7 @@ test("分享图叠加层包含手绘相框、纸张纹理和记录标题", () =>
   assert.match(svg, /stroke-dasharray="19 13"/);
   assert.match(svg, /今日份美食记录/);
   assert.match(svg, /蒜蓉西兰花/);
-  assert.match(svg, /class="object-contour"/);
+  assert.doesNotMatch(svg, /class="object-contour"/);
   assert.match(svg, /清爽脆嫩，刚刚好/);
   assert.doesNotMatch(svg, /#F7E9C9/);
 });
@@ -275,11 +275,14 @@ test("分享图提示词禁止模型渲染不可靠的文字和数字", () => {
   assert.match(prompt, /不要生成任何文字、数字/);
   assert.match(prompt, /禁止全局偏黄、偏橙、偏棕/);
   assert.match(prompt, /逐个描绘物体轮廓/);
+  assert.match(prompt, /原图观感至少保留 95%/);
+  assert.match(prompt, /禁止用粗大的闭合圆圈/);
+  assert.match(prompt, /输出必须高清/);
   assert.match(prompt, /保留原始食物/);
   assert.match(prompt, /不要制作顶部或底部的大色块、大白卡、深色信息面板/);
   const overlay = buildShareOverlaySvg({
     totalCalories: 500,
-    items: [{ label: "番茄炒蛋", calories: 500, bbox: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 } }]
+    items: [{ label: "番茄炒蛋", calories: 500, bbox: { x: 0.1, y: 0.1, width: 0.4, height: 0.4 } }]
   });
   assert.match(overlay, /约 500 kcal/);
   assert.match(overlay, /class="meal-bubble"/);

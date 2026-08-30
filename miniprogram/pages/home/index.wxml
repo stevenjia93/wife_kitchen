@@ -319,20 +319,14 @@
         </view>
         <view wx:if="{{!managedDishes.length}}" class="empty">还没有菜，先从下厨房导入一道。</view>
         <view wx:for="{{managedDishes}}" wx:key="id" class="managed-dish" data-id="{{item.id}}" bindtap="openDishDetail">
-          <view class="managed-main">
-            <image wx:if="{{item.imageSrc}}" class="managed-thumb" src="{{item.imageSrc}}" mode="aspectFill"></image>
-            <view wx:else class="managed-thumb placeholder">{{item.imageInitial}}</view>
-            <view class="managed-copy">
-              <view class="order-name">{{item.name}}</view>
-              <view class="subtitle">{{item.meta}}</view>
-              <view class="managed-ingredients">{{item.ingredientText}}</view>
-            </view>
+          <image wx:if="{{item.imageSrc}}" class="managed-thumb" src="{{item.imageSrc}}" mode="aspectFill"></image>
+          <view wx:else class="managed-thumb placeholder">{{item.imageInitial}}</view>
+          <view class="managed-copy">
+            <view class="order-name">{{item.name}}</view>
+            <view class="subtitle">{{item.meta}}</view>
+            <view class="managed-ingredients">{{item.ingredientText}}</view>
           </view>
-          <view class="managed-actions">
-            <button wx:if="{{item.sourceUrl}}" class="managed-source-btn" data-url="{{item.sourceUrl}}" catchtap="copyRecipeSource">查看来源</button>
-            <view wx:else class="source-empty">家庭菜谱</view>
-            <view class="delete-menu-btn" data-id="{{item.id}}" catchtap="removeManagedDish">×</view>
-          </view>
+          <view class="delete-menu-btn" data-id="{{item.id}}" catchtap="removeManagedDish">×</view>
         </view>
       </view>
     </block>
@@ -475,7 +469,7 @@
               </view>
             </view>
 
-            <button wx:if="{{detailDish.sourceUrl}}" class="button ghost detail-source" data-url="{{detailDish.sourceUrl}}" bindtap="copyRecipeSource">复制参考来源（可选）</button>
+            <button wx:if="{{detailDish.sourceUrl}}" class="button ghost detail-source" data-url="{{detailDish.sourceUrl}}" bindtap="copyRecipeSource">复制参考来源</button>
           </view>
         </scroll-view>
       </view>
