@@ -7,10 +7,14 @@ const projectRoot = path.join(__dirname, "..");
 
 test("re-upload replaces the current photo and auto-generates a share image after recognition", () => {
   const source = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.js"), "utf8");
+  const template = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxml"), "utf8");
   assert.match(source, /plan\.afterPhotos = \[photo\]/);
   assert.match(source, /this\.analyzeMealPhoto\(photo\.id\)/);
   assert.match(source, /await this\.generateMealSharePhoto\(photoId, \{ image, analysis: payload\.analysis, quiet: true \}\)/);
   assert.match(source, /async generateSharePhoto\(event\) \{\s*this\.generateMealSharePhoto/);
+  assert.match(template, /整桌照片热量识别/);
+  assert.match(template, /\{\{item\.totalCalories\}\}/);
+  assert.match(template, /\{\{item\.calories\}\} kcal/);
 });
 
 test("menu management keeps image, copy and delete action in one row without a source button", () => {

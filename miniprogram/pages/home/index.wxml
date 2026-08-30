@@ -334,7 +334,7 @@
     <view class="panel photo-panel" wx:if="{{showPhotoPanel}}">
       <view class="panel-head">
         <view>
-          <view class="section-title">AI 热量估算</view>
+          <view class="section-title">整桌照片热量识别</view>
           <view class="subtitle">{{photoPanelSubtitle}}</view>
         </view>
         <view class="pill">剩 {{photoAttemptsRemaining}} 次</view>

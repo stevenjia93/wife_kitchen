@@ -9,6 +9,7 @@ const {
   buildPrompt,
   buildShareImagePrompt,
   buildShareOverlaySvg,
+  shareLabel,
   dashscopeConfig,
   getMealShareImageTask,
   parseJsonText,
@@ -256,27 +257,32 @@ test("异步分享图完成后叠加精确热量文字并返回 JPEG", async () 
   }
 });
 
-test("分享图叠加层包含手绘相框、纸张纹理和记录标题", () => {
+test("分享图叠加层使用克制的 ins 手账标题、粉色点缀和云朵注解", () => {
   const svg = buildShareOverlaySvg({
     totalCalories: 680,
     items: [{ label: "蒜蓉西兰花", calories: 120, bbox: { x: 0.62, y: 0.3, width: 0.22, height: 0.2 } }]
   });
   assert.match(svg, /paper-grain/);
-  assert.match(svg, /stroke-dasharray="19 13"/);
   assert.match(svg, /今日份美食记录/);
   assert.match(svg, /蒜蓉西兰花/);
+  assert.match(svg, /class="note-cloud"/);
+  assert.match(svg, /class="accent-pink"/);
   assert.doesNotMatch(svg, /class="object-contour"/);
+  assert.doesNotMatch(svg, /stroke-dasharray="19 13"/);
   assert.match(svg, /清爽脆嫩，刚刚好/);
   assert.doesNotMatch(svg, /#F7E9C9/);
+  assert.equal(shareLabel("滑蛋汤（含蛋花与少量青豆）"), "滑蛋汤");
 });
 
 test("分享图提示词禁止模型渲染不可靠的文字和数字", () => {
   const prompt = buildShareImagePrompt({ totalCalories: 500, items: [] });
   assert.match(prompt, /不要生成任何文字、数字/);
   assert.match(prompt, /禁止全局偏黄、偏橙、偏棕/);
-  assert.match(prompt, /逐个描绘物体轮廓/);
+  assert.match(prompt, /给 3 到 4 个最主要、边缘清楚的盘子或碗描绘真实物体轮廓/);
   assert.match(prompt, /原图观感至少保留 95%/);
   assert.match(prompt, /禁止用粗大的闭合圆圈/);
+  assert.match(prompt, /画面至少保留 65% 完全没有涂画的区域/);
+  assert.match(prompt, /不要在图中添加气泡框、箭头、标题/);
   assert.match(prompt, /输出必须高清/);
   assert.match(prompt, /保留原始食物/);
   assert.match(prompt, /不要制作顶部或底部的大色块、大白卡、深色信息面板/);
@@ -285,7 +291,7 @@ test("分享图提示词禁止模型渲染不可靠的文字和数字", () => {
     items: [{ label: "番茄炒蛋", calories: 500, bbox: { x: 0.1, y: 0.1, width: 0.4, height: 0.4 } }]
   });
   assert.match(overlay, /约 500 kcal/);
-  assert.match(overlay, /class="meal-bubble"/);
+  assert.match(overlay, /class="note-cloud"/);
   assert.match(overlay, /class="doodle-arrow"/);
   assert.match(overlay, /LXGW WenKai Lite/);
   assert.doesNotMatch(overlay, /width="940" height="326"/);
