@@ -176,6 +176,18 @@ async function createHouseholdForUser({ userId, code, name }) {
   }
 }
 
+async function deleteHouseholdOwnedByUser({ userId, householdId }) {
+  const result = await getPool().query(
+    `delete from households
+     where id = $1 and owner_user_id = $2
+     returning id, coalesce(name, code) as name`,
+    [householdId, userId]
+  );
+  const household = result.rows[0];
+  if (!household) throw serviceError("只有家庭创建者可以删除该家庭", 403);
+  return { ...household, role: "owner" };
+}
+
 async function claimLegacyHousehold({ userId, code }) {
   const client = await getPool().connect();
   try {
@@ -325,6 +337,7 @@ module.exports = {
   createHouseholdInvitation,
   createUserSession,
   databaseSslOptions,
+  deleteHouseholdOwnedByUser,
   deleteUserSession,
   findHouseholdMembership,
   findUserBySessionTokenHash,

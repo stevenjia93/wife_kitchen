@@ -19,16 +19,29 @@
     <view class="gate-title">选择你的家庭</view>
     <view class="gate-copy">已登录为 {{userDisplayName}}。每个家庭都有独立菜单，只有受邀请的成员可以进入。</view>
     <view wx:if="{{households.length}}" class="household-list">
-      <button
+      <view
         wx:for="{{households}}"
         wx:key="id"
         class="household-option"
-        data-id="{{item.id}}"
-        bindtap="selectHousehold"
       >
-        <text>{{item.name}}</text>
-        <text>{{item.role === 'owner' ? '我创建的' : '已加入'}}</text>
-      </button>
+        <button
+          class="household-enter"
+          data-id="{{item.id}}"
+          disabled="{{syncing}}"
+          bindtap="selectHousehold"
+        >
+          <text class="household-name">{{item.name}}</text>
+          <text class="household-role">{{item.role === 'owner' ? '我创建的' : '已加入'}}</text>
+        </button>
+        <button
+          wx:if="{{item.role === 'owner'}}"
+          class="household-delete"
+          data-id="{{item.id}}"
+          loading="{{deletingHouseholdId === item.id}}"
+          disabled="{{syncing}}"
+          catchtap="deleteHousehold"
+        >删除</button>
+      </view>
     </view>
     <view class="gate-copy create-household-copy">创建一个新家庭</view>
     <input

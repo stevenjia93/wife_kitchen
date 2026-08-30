@@ -69,6 +69,50 @@ test("joins a household with an invitation token", async () => {
   assert.equal(response.body.household.role, "member");
 });
 
+test("deletes a household only through its owner", async () => {
+  let deletedValue;
+  const database = {
+    deleteHouseholdOwnedByUser: async (value) => {
+      deletedValue = value;
+      return { id: HOUSEHOLD_ID, name: "错建的家庭", role: "owner" };
+    }
+  };
+  const auth = { requireUser: async () => ({ id: "user-1" }) };
+  const response = responseRecorder();
+
+  await createHandler(database, auth)(
+    { method: "POST", body: { action: "delete", householdId: HOUSEHOLD_ID } },
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(deletedValue, { userId: "user-1", householdId: HOUSEHOLD_ID });
+  assert.deepEqual(response.body, {
+    deleted: true,
+    household: { id: HOUSEHOLD_ID, name: "错建的家庭", role: "owner" }
+  });
+});
+
+test("returns the owner-only deletion error", async () => {
+  const database = {
+    deleteHouseholdOwnedByUser: async () => {
+      const error = new Error("只有家庭创建者可以删除该家庭");
+      error.statusCode = 403;
+      throw error;
+    }
+  };
+  const auth = { requireUser: async () => ({ id: "user-2" }) };
+  const response = responseRecorder();
+
+  await createHandler(database, auth)(
+    { method: "POST", body: { action: "delete", householdId: HOUSEHOLD_ID } },
+    response
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.error, "只有家庭创建者可以删除该家庭");
+});
+
 test("validates household and invitation identifiers", () => {
   assert.equal(_internals.normalizeHouseholdId(HOUSEHOLD_ID), HOUSEHOLD_ID);
   assert.throws(() => _internals.normalizeHouseholdId("household-1"), /家庭编号/);

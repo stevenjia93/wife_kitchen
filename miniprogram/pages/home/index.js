@@ -50,6 +50,7 @@ Page({
     householdRole: "member",
     households: [],
     newHouseholdName: "我的家庭",
+    deletingHouseholdId: "",
     inviteReady: false,
     status: "正在微信登录",
     syncing: false,
@@ -584,6 +585,46 @@ Page({
   selectHousehold(event) {
     const household = this.data.households.find((item) => item.id === event.currentTarget.dataset.id);
     if (household) this.enterHousehold(household);
+  },
+
+  deleteHousehold(event) {
+    const household = this.data.households.find((item) => item.id === event.currentTarget.dataset.id);
+    if (!household || household.role !== "owner" || this.data.deletingHouseholdId) return;
+    wx.showModal({
+      title: `删除“${household.name}”？`,
+      content: "确认删除后，该家庭及其中的菜单、点餐记录和图片记录都会消失，且无法恢复。",
+      confirmText: "确认删除",
+      confirmColor: "#d84a2b",
+      cancelText: "取消",
+      success: (result) => {
+        if (result.confirm) this.confirmDeleteHousehold(household);
+      }
+    });
+  },
+
+  async confirmDeleteHousehold(household) {
+    this.setData({ deletingHouseholdId: household.id, syncing: true });
+    try {
+      await requestApi("/api/households", {
+        action: "delete",
+        householdId: household.id
+      });
+      wx.removeStorageSync(`${STORAGE_KEY}:${household.id}`);
+      const savedHousehold = wx.getStorageSync(HOUSEHOLD_KEY) || {};
+      if (savedHousehold.id === household.id || savedHousehold.householdId === household.id) {
+        wx.removeStorageSync(HOUSEHOLD_KEY);
+      }
+      this.setData({
+        households: this.data.households.filter((item) => item.id !== household.id),
+        deletingHouseholdId: "",
+        syncing: false,
+        status: "请选择或创建家庭"
+      });
+      showToast("家庭已删除", "success");
+    } catch (error) {
+      this.setData({ deletingHouseholdId: "", syncing: false });
+      showToast(error.message || "删除失败");
+    }
   },
 
   async enterHousehold(household, options = {}) {

@@ -75,6 +75,15 @@ function createHandler(database = defaultDatabase, auth = defaultAuth) {
         return;
       }
 
+      if (action === "delete") {
+        const household = await database.deleteHouseholdOwnedByUser({
+          userId: user.id,
+          householdId: normalizeHouseholdId(body.householdId)
+        });
+        res.status(200).json({ deleted: true, household: publicHousehold(household) });
+        return;
+      }
+
       throw httpError("不支持的家庭操作", 400);
     } catch (error) {
       res.status(error.statusCode || 400).json({ error: error.message || "家庭操作失败" });
