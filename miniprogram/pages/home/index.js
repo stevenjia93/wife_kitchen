@@ -2,6 +2,7 @@ const stateUtils = require("../../utils/state");
 const { AUTH_KEY, loginWithWechat, requestApi, showToast, requirePrivacyAuthorization } = require("../../utils/api");
 const SHARE_TASK_POLL_INTERVAL_MS = 5000;
 const SHARE_TASK_MAX_WAIT_MS = 5 * 60 * 1000;
+const MAX_RECIPE_STEPS = 32;
 
 const {
   STORAGE_KEY,
@@ -62,6 +63,7 @@ Page({
     recipeLoading: false,
     detailOpen: false,
     detailDish: null,
+    detailRecipeLoading: false,
     categories,
     menuDishes: [],
     managedDishes: [],
@@ -77,6 +79,7 @@ Page({
     this.enableShareMenu();
     this.state = this.loadLocalState();
     this.photoImages = {};
+    this.recipeRefreshes = new Set();
     this.remoteSaveTimer = null;
     const savedHousehold = wx.getStorageSync(HOUSEHOLD_KEY) || {};
     const role = options.role === "husband" ? "husband" : "wife";
@@ -460,6 +463,7 @@ Page({
       imageSrc: dishImageSrc(dish),
       imageInitial: dish.name.slice(0, 1),
       sourceUrl: dish.sourceUrl || "",
+      canRefreshImages: dishNeedsStepImageRefresh(dish),
       guideLabel: recipeGuideLabel(dish.guideSource),
       ingredients: (dish.ingredients || []).map((item) => ({ text: formatIngredient(item) })),
       steps: visibleSteps.map((step, index) => ({
@@ -764,8 +768,51 @@ Page({
     if (!dish) return;
     this.setData({
       detailOpen: true,
-      detailDish: this.buildDishDetail(dish)
+      detailDish: this.buildDishDetail(dish),
+      detailRecipeLoading: false
     });
+    if (dishNeedsStepImageRefresh(dish)) this.refreshDishRecipe(dishId);
+  },
+
+  refreshDishRecipeByTap(event) {
+    this.refreshDishRecipe(event.currentTarget.dataset.id, { showResult: true });
+  },
+
+  async refreshDishRecipe(dishId, options = {}) {
+    if (!dishId || this.recipeRefreshes.has(dishId)) return;
+    const index = (this.state.dishes || []).findIndex((item) => item.id === dishId);
+    const dish = index >= 0 ? this.state.dishes[index] : null;
+    if (!dish?.sourceUrl) return;
+
+    this.recipeRefreshes.add(dishId);
+    if (this.data.detailOpen && this.data.detailDish?.id === dishId) {
+      this.setData({ detailRecipeLoading: true });
+    }
+    try {
+      const payload = await requestApi("/api/import-recipe", {
+        url: dish.sourceUrl,
+        includeImages: false,
+        includeStepImages: false
+      });
+      const nextDish = mergeDishRecipeData(dish, payload.recipe);
+      if (dishStepImageCount(nextDish) > dishStepImageCount(dish)) {
+        this.state.dishes[index] = nextDish;
+        this.persistState();
+        if (this.data.detailOpen && this.data.detailDish?.id === dishId) {
+          this.setData({ detailDish: this.buildDishDetail(nextDish) });
+        }
+        showToast("已补齐图文步骤", "success");
+      } else if (options.showResult) {
+        showToast("暂时没有读到步骤图");
+      }
+    } catch (error) {
+      if (options.showResult) showToast(error.message || "图文步骤更新失败");
+    } finally {
+      this.recipeRefreshes.delete(dishId);
+      if (this.data.detailOpen && this.data.detailDish?.id === dishId) {
+        this.setData({ detailRecipeLoading: false });
+      }
+    }
   },
 
   openWishDetail(event) {
@@ -779,7 +826,7 @@ Page({
   },
 
   closeDishDetail() {
-    this.setData({ detailOpen: false, detailDish: null });
+    this.setData({ detailOpen: false, detailDish: null, detailRecipeLoading: false });
   },
 
   noop() {},
@@ -1501,8 +1548,8 @@ function dishFromRecipe(recipe, fallbackName) {
     sourceUrl: String((recipe && recipe.sourceUrl) || "").trim(),
     guideSource: String((recipe && recipe.guideSource) || "").trim(),
     ingredients,
-    steps: Array.isArray(recipe && recipe.steps) ? recipe.steps.map(cleanStepDisplayText).filter(Boolean).slice(0, 12) : [],
-    stepDetails: Array.isArray(recipe && recipe.stepDetails) ? recipe.stepDetails.map(normalizeStepItem).filter((step) => step.text || step.image || step.imageUrl).slice(0, 12) : [],
+    steps: Array.isArray(recipe && recipe.steps) ? recipe.steps.map(cleanStepDisplayText).filter(Boolean).slice(0, MAX_RECIPE_STEPS) : [],
+    stepDetails: Array.isArray(recipe && recipe.stepDetails) ? recipe.stepDetails.map(normalizeStepItem).filter((step) => step.text || step.image || step.imageUrl).slice(0, MAX_RECIPE_STEPS) : [],
     note: String((recipe && recipe.note) || "从下厨房导入。").trim().slice(0, 80)
   };
 }
@@ -1582,6 +1629,45 @@ function dishStepItems(dish) {
     })).filter((step) => step.text || step.image || step.imageUrl);
   }
   return texts.map((text) => ({ text, image: "", imageUrl: "" }));
+}
+
+function dishStepImageCount(dish) {
+  return dishStepItems(dish).filter((step) => /^https?:\/\//i.test(String(step.imageUrl || step.image || ""))).length;
+}
+
+function dishNeedsStepImageRefresh(dish) {
+  if (!dish?.sourceUrl) return false;
+  const steps = dishStepItems(dish);
+  const imageCount = dishStepImageCount(dish);
+  if (steps.length && imageCount >= steps.length) return false;
+  const checkedAt = Date.parse(dish.recipeImagesCheckedAt || "");
+  return !checkedAt || Date.now() - checkedAt > 7 * 24 * 60 * 60 * 1000;
+}
+
+function mergeDishRecipeData(dish, recipe = {}) {
+  const incomingSteps = Array.isArray(recipe.steps)
+    ? recipe.steps.map(cleanStepDisplayText).filter(Boolean).slice(0, MAX_RECIPE_STEPS)
+    : [];
+  const incomingDetails = Array.isArray(recipe.stepDetails)
+    ? recipe.stepDetails.map(normalizeStepItem).filter((step) => step.text || step.image || step.imageUrl).slice(0, MAX_RECIPE_STEPS)
+    : [];
+  const incomingIngredients = Array.isArray(recipe.ingredients)
+    ? recipe.ingredients.map(recipeIngredient).filter(Boolean).slice(0, 40)
+    : [];
+  const image = nonDataUrl(recipe.imageUrl || recipe.image) || dish.imageUrl || dish.image || "";
+  return {
+    ...dish,
+    name: String(recipe.name || dish.name || "家常菜").trim().slice(0, 28),
+    time: Math.max(5, Math.min(180, Math.round(Number(recipe.time) || Number(dish.time) || 20))),
+    image,
+    imageUrl: image,
+    sourceUrl: String(recipe.sourceUrl || dish.sourceUrl || "").trim(),
+    guideSource: "source",
+    recipeImagesCheckedAt: new Date().toISOString(),
+    ingredients: incomingIngredients.length ? incomingIngredients : dish.ingredients || [],
+    steps: incomingSteps.length ? incomingSteps : dish.steps || [],
+    stepDetails: incomingDetails.length ? incomingDetails : dish.stepDetails || []
+  };
 }
 
 function normalizeStepItem(step) {

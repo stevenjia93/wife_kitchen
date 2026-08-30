@@ -1411,6 +1411,24 @@
   margin-top: 24rpx;
 }
 
+.detail-refresh-note,
+.detail-refresh-button {
+  margin-top: 12rpx;
+  border-radius: 14rpx;
+  background: rgba(70, 116, 87, 0.1);
+  color: #3f674e;
+  font-size: 23rpx;
+  font-weight: 800;
+}
+
+.detail-refresh-note {
+  padding: 14rpx 16rpx;
+}
+
+.detail-refresh-button {
+  min-height: 64rpx;
+}
+
 .ingredient-tags {
   display: flex;
   flex-wrap: wrap;

@@ -443,10 +443,17 @@
 
             <view class="detail-section">
               <view class="mini-label">{{detailDish.guideLabel}}</view>
+              <view wx:if="{{detailRecipeLoading}}" class="detail-refresh-note">正在补齐图文步骤…</view>
+              <button
+                wx:elif="{{detailDish.canRefreshImages}}"
+                class="detail-refresh-button"
+                data-id="{{detailDish.id}}"
+                bindtap="refreshDishRecipeByTap"
+              >补齐图文步骤</button>
               <view wx:for="{{detailDish.steps}}" wx:key="index" class="step-card">
                 <view class="step-index">{{item.index}}</view>
                 <view class="step-body">
-                  <image wx:if="{{item.imageSrc}}" class="step-image" src="{{item.imageSrc}}" mode="widthFix"></image>
+                  <image wx:if="{{item.imageSrc}}" class="step-image" src="{{item.imageSrc}}" mode="widthFix" lazy-load="{{true}}"></image>
                   <view class="step-text">{{item.text}}</view>
                 </view>
               </view>

@@ -2,8 +2,9 @@ const MAX_HTML_CHARS = 1_500_000;
 const MAX_IMAGE_BYTES = 700_000;
 const MAX_STEP_IMAGE_BYTES = 220_000;
 const MAX_STEP_IMAGES = 20;
-const MAX_STEP_ITEMS = 20;
+const MAX_STEP_ITEMS = 32;
 const PAGE_FETCH_TIMEOUT_MS = 8000;
+const READABLE_FETCH_TIMEOUT_MS = 15000;
 const IMAGE_FETCH_TIMEOUT_MS = 3500;
 const USER_AGENT =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -39,21 +40,7 @@ async function importRecipeFromUrl(rawUrl, options = {}) {
   const includeStepImages = options.includeStepImages !== false;
   const maxStepImages = Number.isFinite(options.maxStepImages) ? options.maxStepImages : MAX_STEP_IMAGES;
   const maxStepImageBytes = Number.isFinite(options.maxStepImageBytes) ? options.maxStepImageBytes : MAX_STEP_IMAGE_BYTES;
-  const response = await fetch(sourceUrl, {
-    headers: {
-      "user-agent": USER_AGENT,
-      accept: "text/html,application/xhtml+xml",
-      "accept-language": "zh-CN,zh;q=0.9,en;q=0.5"
-    },
-    signal: timeoutSignal(options.pageTimeoutMs || PAGE_FETCH_TIMEOUT_MS)
-  });
-
-  if (!response.ok) {
-    throw httpError("菜谱页面暂时无法读取", 502);
-  }
-
-  const html = (await response.text()).slice(0, MAX_HTML_CHARS);
-  const recipe = parseRecipePage(html, sourceUrl);
+  const recipe = await fetchAndParseRecipe(sourceUrl, options);
   if (recipe.image) {
     recipe.imageUrl = recipe.image;
     if (includeImages) {
@@ -89,6 +76,48 @@ async function importRecipeFromUrl(rawUrl, options = {}) {
     }
   }
   return recipe;
+}
+
+async function fetchAndParseRecipe(sourceUrl, options = {}) {
+  try {
+    const response = await fetch(sourceUrl, {
+      headers: {
+        "user-agent": USER_AGENT,
+        accept: "text/html,application/xhtml+xml",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.5"
+      },
+      signal: timeoutSignal(options.pageTimeoutMs || PAGE_FETCH_TIMEOUT_MS)
+    });
+    if (!response.ok) throw httpError("菜谱页面暂时无法读取", 502);
+    const html = (await response.text()).slice(0, MAX_HTML_CHARS);
+    return parseRecipePage(html, sourceUrl);
+  } catch (directError) {
+    try {
+      const markdown = await fetchReadableRecipeMarkdown(sourceUrl, options);
+      const recipe = parseReadableRecipeMarkdown(markdown, sourceUrl);
+      if (!recipe.stepDetails.length) throw httpError("菜谱步骤暂时无法读取", 502);
+      return recipe;
+    } catch {
+      throw directError.statusCode ? directError : httpError("菜谱页面暂时无法读取", 502);
+    }
+  }
+}
+
+async function fetchReadableRecipeMarkdown(sourceUrl, options = {}) {
+  const target = new URL(sourceUrl);
+  target.protocol = "http:";
+  target.hostname = "www.xiachufang.com";
+  const readerUrl = `https://r.jina.ai/${target.toString()}`;
+  const response = await fetch(readerUrl, {
+    headers: {
+      "user-agent": USER_AGENT,
+      accept: "text/plain;charset=utf-8",
+      "accept-language": "zh-CN,zh;q=0.9,en;q=0.5"
+    },
+    signal: timeoutSignal(options.readableFetchTimeoutMs || READABLE_FETCH_TIMEOUT_MS)
+  });
+  if (!response.ok) throw httpError("菜谱备用页面暂时无法读取", 502);
+  return (await response.text()).slice(0, MAX_HTML_CHARS);
 }
 
 function readJsonBody(req) {
@@ -167,6 +196,68 @@ function parseRecipePage(html, sourceUrl) {
     stepDetails,
     note: cleanText(description).slice(0, 120)
   };
+}
+
+function parseReadableRecipeMarkdown(markdown, sourceUrl) {
+  const text = String(markdown || "");
+  const title = cleanRecipeTitle(
+    firstMatch(text, /^Title:\s*(.+)$/im) || firstMatch(text, /^#{1,2}\s+(.+)$/m) || "新菜谱"
+  );
+  const ingredientsSection = firstMatch(
+    text,
+    /^#{2,3}\s+用料\s*$([\s\S]*?)(?=^#{2,3}\s+|(?![\s\S]))/m
+  );
+  const ingredients = ingredientsSection
+    .split(/\n+/)
+    .map(cleanMarkdownLine)
+    .filter((line) => line && !/^[-|:\s]+$/.test(line) && !/^(食材|用料)\s*(用量)?$/.test(line))
+    .slice(0, 40);
+  const recipeSection = firstMatch(
+    text,
+    /^#{2,3}\s+.*(?:做法步骤|的做法)\s*$([\s\S]*?)(?=^#{2,3}\s+|(?![\s\S]))/m
+  ) || text;
+  const stepDetails = extractMarkdownStepDetails(recipeSection, sourceUrl);
+  const image = absoluteUrl(firstMatch(text, /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/i), sourceUrl);
+
+  return {
+    name: title,
+    sourceUrl,
+    image,
+    time: 20,
+    ingredients,
+    steps: stepDetails.map((step) => step.text).filter(Boolean),
+    stepDetails,
+    note: "来自公开菜谱页面的图文步骤。"
+  };
+}
+
+function extractMarkdownStepDetails(markdown, sourceUrl) {
+  const text = String(markdown || "");
+  const numbered = [...text.matchAll(/^\s*(\d+)\.\s+([\s\S]*?)(?=^\s*\d+\.\s+|^#{2,3}\s+|(?![\s\S]))/gm)];
+  const mobile = numbered.length
+    ? []
+    : [...text.matchAll(/^步骤\s*(\d+)\s*$([\s\S]*?)(?=^步骤\s*\d+\s*$|^#{2,3}\s+|(?![\s\S]))/gm)];
+  const matches = numbered.length ? numbered : mobile;
+
+  return matches
+    .map((match) => {
+      const block = match[2] || "";
+      const image = absoluteUrl(firstMatch(block, /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/i), sourceUrl);
+      const stepText = cleanStepText(cleanMarkdownLine(block.replace(/!\[[^\]]*\]\([^)]+\)/gi, " ")));
+      return { text: stepText, image };
+    })
+    .filter((step) => step.text || step.image)
+    .slice(0, MAX_STEP_ITEMS);
+}
+
+function cleanMarkdownLine(value) {
+  return cleanText(
+    String(value || "")
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, " ")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/^\s*[-*+]\s+/gm, "")
+      .replace(/^\s*#+\s+/gm, "")
+  );
 }
 
 async function fetchImageDataUrl(imageUrl, refererUrl, maxBytes = MAX_IMAGE_BYTES, timeoutMs = IMAGE_FETCH_TIMEOUT_MS) {
@@ -406,8 +497,10 @@ module.exports = handler;
 module.exports._internals = {
   importRecipeFromUrl,
   parseRecipePage,
+  parseReadableRecipeMarkdown,
   normalizeSourceUrl,
   fetchImageDataUrl,
   extractStepDetails,
+  extractMarkdownStepDetails,
   normalizeInstructionDetails
 };

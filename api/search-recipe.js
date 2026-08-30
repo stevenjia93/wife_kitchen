@@ -80,6 +80,9 @@ async function importBestRecipe(candidates, query, options = {}) {
         stepImageCount: countStepImages(recipe),
         recipe: {
           ...recipe,
+          ingredients: Array.isArray(recipe.ingredients) && recipe.ingredients.length
+            ? recipe.ingredients
+            : candidate.ingredients || [],
           sourceUrl: recipe.sourceUrl || candidate.url,
           searchTitle: candidate.title,
           searchRating: candidate.rating,
@@ -166,7 +169,7 @@ function recipeFromSearchCandidate(candidate) {
 
 async function ensureInAppRecipeGuide(recipe, query) {
   const ingredients = normalizeStringList(recipe?.ingredients, 32);
-  const steps = normalizeStringList(recipe?.steps, 12);
+  const steps = normalizeStringList(recipe?.steps, 32);
   if (ingredients.length >= 2 && steps.length >= 3) {
     return {
       ...recipe,
