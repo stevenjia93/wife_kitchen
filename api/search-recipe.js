@@ -5,6 +5,8 @@ const SEARCH_IMPORT_LIMIT = 2;
 const SEARCH_FETCH_TIMEOUT_MS = 6500;
 const RECIPE_FETCH_TIMEOUT_MS = 9000;
 const RECIPE_IMAGE_TIMEOUT_MS = 6500;
+const DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com";
+const DEFAULT_RECIPE_MODEL = "qwen-plus";
 const USER_AGENT =
   "Mozilla/5.0 (compatible; WifeKitchenRecipeSearcher/1.2)";
 
@@ -43,11 +45,12 @@ async function handler(req, res) {
     const candidates = extractSearchCandidates(html, searchUrl, query);
     if (!candidates.length) throw httpError("没找到合适的下厨房菜谱", 404);
 
-    const recipe = await importBestRecipe(candidates, query, {
+    const matchedRecipe = await importBestRecipe(candidates, query, {
       includeImages: body.includeImages !== false,
       includeStepImages: body.includeStepImages !== false
     });
-    if (!recipe) throw httpError("找到了候选菜谱，但详情暂时无法读取", 502);
+    if (!matchedRecipe) throw httpError("找到了候选菜谱，但详情暂时无法读取", 502);
+    const recipe = await ensureInAppRecipeGuide(matchedRecipe, query);
 
     res.status(200).json({ recipe, candidates: candidates.slice(0, 3) });
   } catch (error) {
@@ -151,10 +154,135 @@ function recipeFromSearchCandidate(candidate) {
     steps: [],
     stepDetails: [],
     time: 20,
-    note: `${ratingNote}${cookedNote}。详情页触发访问验证时，请打开来源链接查看完整步骤。`,
+    note: `${ratingNote}${cookedNote}。小程序会整理可直接查看的参考做法。`,
     searchRating: candidate.rating || 0,
     searchCookedCount: candidate.cookedCount || 0
   };
+}
+
+async function ensureInAppRecipeGuide(recipe, query) {
+  const ingredients = normalizeStringList(recipe?.ingredients, 32);
+  const steps = normalizeStringList(recipe?.steps, 12);
+  if (ingredients.length >= 2 && steps.length >= 3) {
+    return { ...recipe, ingredients, steps, guideSource: recipe.guideSource || "source" };
+  }
+
+  try {
+    const generated = await generateRecipeGuide(recipe, query);
+    return {
+      ...recipe,
+      ...generated,
+      image: recipe.image || "",
+      imageUrl: recipe.imageUrl || recipe.image || "",
+      sourceUrl: recipe.sourceUrl || "",
+      searchRating: recipe.searchRating || 0,
+      searchCookedCount: recipe.searchCookedCount || 0,
+      guideSource: "qwen",
+      note: `${recipe.note || "已匹配高分菜谱。"} 以下为千问整理的家庭参考做法。`.slice(0, 160)
+    };
+  } catch {
+    return buildLocalRecipeGuide(recipe, query);
+  }
+}
+
+async function generateRecipeGuide(recipe, query) {
+  const apiKey = String(process.env.DASHSCOPE_API_KEY || "").trim();
+  if (!apiKey) throw new Error("DASHSCOPE_API_KEY missing");
+  const baseUrl = String(process.env.DASHSCOPE_BASE_URL || DEFAULT_DASHSCOPE_BASE_URL).trim().replace(/\/+$/, "");
+  const response = await fetch(`${baseUrl}/compatible-mode/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json"
+    },
+    signal: timeoutSignal(18_000),
+    body: JSON.stringify({
+      model: process.env.DASHSCOPE_RECIPE_MODEL || DEFAULT_RECIPE_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: "你是家庭中餐菜谱编辑。输出安全、清晰、可在小程序内直接照做的 JSON，不要声称复刻来源网站原文。"
+        },
+        {
+          role: "user",
+          content: buildRecipeGuidePrompt(recipe, query)
+        }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.35,
+      max_completion_tokens: 1800
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error?.message || payload.message || "千问菜谱整理失败");
+  const content = payload.choices?.[0]?.message?.content;
+  const parsed = parseJsonText(Array.isArray(content) ? content.map((item) => item.text || "").join("") : content);
+  const ingredients = normalizeStringList(parsed.ingredients, 32);
+  const steps = normalizeStringList(parsed.steps, 12);
+  if (ingredients.length < 2 || steps.length < 3) throw new Error("千问菜谱内容不完整");
+  return {
+    name: cleanText(parsed.name || recipe?.name || query).slice(0, 40),
+    time: Math.max(5, Math.min(180, Math.round(Number(parsed.time) || Number(recipe?.time) || 20))),
+    ingredients,
+    steps,
+    stepDetails: steps.map((text) => ({ text, image: "", imageUrl: "" }))
+  };
+}
+
+function buildRecipeGuidePrompt(recipe, query) {
+  const ingredients = normalizeStringList(recipe?.ingredients, 32);
+  return [
+    `菜名：${cleanText(recipe?.name || query)}`,
+    ingredients.length ? `搜索结果原料线索：${ingredients.join("、")}` : "搜索结果没有完整原料线索，请给出常见家庭用量。",
+    "请返回严格 JSON：{\"name\":\"菜名\",\"time\":分钟整数,\"ingredients\":[\"食材 用量\"],\"steps\":[\"步骤\"]}",
+    "要求：原料 4-12 项并写常见用量；步骤 4-8 步，每步完整、按顺序、包含火候或时间；生肉和蛋类必须写熟透；只输出 JSON。"
+  ].join("\n");
+}
+
+function buildLocalRecipeGuide(recipe, query) {
+  const name = cleanText(recipe?.name || query || "家常菜");
+  const existingIngredients = normalizeStringList(recipe?.ingredients, 32);
+  const ingredients = existingIngredients.length >= 2
+    ? existingIngredients
+    : ["主料 适量", "葱姜蒜 适量", "食用油 适量", "盐和常用调味料 适量"];
+  const mainIngredients = ingredients.slice(0, 5).join("、");
+  const steps = [
+    `准备${mainIngredients}，主料洗净并按入口大小切配。`,
+    "锅具预热，加入少量食用油；需要爆香时先下葱姜蒜，小火炒出香味。",
+    "放入主料，按较难熟到易熟的顺序翻炒或炖煮；肉类和蛋类务必完全熟透。",
+    "分次加入调味料和少量水，保持中小火至食材熟透并入味。",
+    "尝味后再补盐，按口味收汁或保留汤汁，关火装盘。"
+  ];
+  return {
+    ...recipe,
+    name,
+    ingredients,
+    steps,
+    stepDetails: steps.map((text) => ({ text, image: "", imageUrl: "" })),
+    guideSource: "local",
+    note: `${recipe?.note || "已匹配高分菜谱。"} 详情读取受限，以下为小程序整理的家庭参考做法。`.slice(0, 160)
+  };
+}
+
+function normalizeStringList(value, limit) {
+  return (Array.isArray(value) ? value : [])
+    .map((item) => cleanText(typeof item === "string" ? item : item?.text || item?.name || ""))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function parseJsonText(value) {
+  const text = String(value || "").trim();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text)?.[1];
+    if (fenced) return JSON.parse(fenced);
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(text.slice(start, end + 1));
+    throw new Error("千问菜谱返回格式不正确");
+  }
 }
 
 function scoreSearchCandidate(candidate, query) {
@@ -281,6 +409,8 @@ module.exports = handler;
 module.exports._internals = {
   extractSearchCandidates,
   recipeFromSearchCandidate,
+  ensureInAppRecipeGuide,
+  buildLocalRecipeGuide,
   scoreSearchCandidate,
   scoreRecipeCompleteness
 };

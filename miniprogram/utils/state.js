@@ -7,6 +7,11 @@ const mealLabels = {
   lunch: "午餐",
   dinner: "晚餐"
 };
+const mealCutoffMinutes = {
+  breakfast: 10 * 60 + 30,
+  lunch: 15 * 60,
+  dinner: 22 * 60 + 30
+};
 const categories = ["全部", "快手菜", "肉菜", "蔬菜", "汤粥", "早餐", "主食"];
 const shoppingGroupOrder = ["肉蛋", "海鲜", "蛋奶", "蔬菜", "主食", "干货", "饮品", "调味", "其他"];
 const unitAliases = {
@@ -241,6 +246,7 @@ function emptyPlan() {
     lunch: [],
     dinner: [],
     skipped: { breakfast: false, lunch: false, dinner: false },
+    reopened: { breakfast: false, lunch: false, dinner: false },
     wishes: [],
     afterPhotos: [],
     submitted: false,
@@ -300,11 +306,16 @@ function normalizePlan(plan) {
     skipped: {
       ...emptyPlan().skipped,
       ...((plan && plan.skipped) || {})
+    },
+    reopened: {
+      ...emptyPlan().reopened,
+      ...((plan && plan.reopened) || {})
     }
   };
   mealOrder.forEach((meal) => {
     normalized[meal] = Array.isArray(normalized[meal]) ? normalized[meal].map(String) : [];
     normalized.skipped[meal] = Boolean(normalized.skipped[meal]);
+    normalized.reopened[meal] = Boolean(normalized.reopened[meal]);
   });
   normalized.wishes = Array.isArray(normalized.wishes) ? normalized.wishes.map(normalizeWish).filter(Boolean) : [];
   normalized.afterPhotos = Array.isArray(normalized.afterPhotos)
@@ -434,6 +445,22 @@ function mealResolved(plan, meal) {
 
 function unresolvedMeals(plan) {
   return mealOrder.filter((meal) => !mealResolved(plan, meal));
+}
+
+function isMealTimeElapsed(meal, key, now = new Date()) {
+  if (key !== dateKeyFromDate(now) || !mealOrder.includes(meal)) return false;
+  return now.getHours() * 60 + now.getMinutes() >= mealCutoffMinutes[meal];
+}
+
+function elapsedMeals(plan, key, now = new Date()) {
+  return mealOrder.filter(
+    (meal) => !mealResolved(plan, meal) && !plan.reopened?.[meal] && isMealTimeElapsed(meal, key, now)
+  );
+}
+
+function actionableUnresolvedMeals(plan, key, now = new Date()) {
+  const elapsed = new Set(elapsedMeals(plan, key, now));
+  return unresolvedMeals(plan).filter((meal) => !elapsed.has(meal));
 }
 
 function hasPlanActivity(plan) {
@@ -594,6 +621,7 @@ module.exports = {
   HOUSEHOLD_KEY,
   mealOrder,
   mealLabels,
+  mealCutoffMinutes,
   categories,
   todayKey,
   dateKeyFromDate,
@@ -617,6 +645,9 @@ module.exports = {
   wishCount,
   mealItemCount,
   unresolvedMeals,
+  isMealTimeElapsed,
+  elapsedMeals,
+  actionableUnresolvedMeals,
   hasPlanActivity,
   canViewOrder,
   canUploadMealPhotos,

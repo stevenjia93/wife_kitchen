@@ -64,28 +64,49 @@
     </view>
 
     <block wx:if="{{showWife}}">
+      <view wx:if="{{showOrderConfirmation}}" class="panel order-confirmation">
+        <view class="confirmation-kicker">已确认</view>
+        <view class="confirmation-title">菜单已确认</view>
+        <view class="subtitle confirmation-subtitle">{{dateTitle}} · {{submittedTimeText}} 已通知厨房</view>
+        <view class="confirmation-count">{{confirmationItemCount}}</view>
+        <view class="confirmation-count-label">道菜 / 许愿</view>
+        <view class="confirmation-meals">
+          <view wx:for="{{wifeMeals}}" wx:key="meal" class="confirmation-meal">
+            <text>{{item.label}}</text>
+            <text>{{item.skipped ? '已跳过' : item.elapsed ? '时间已过' : item.empty ? '无安排' : '已安排'}}</text>
+          </view>
+        </view>
+        <button class="button primary confirmation-primary" bindtap="goKitchenAfterOrder">去厨房看菜单和采购清单</button>
+        <button class="button ghost confirmation-secondary" bindtap="editSubmittedOrder">继续修改菜单</button>
+      </view>
+
+      <block wx:else>
       <view class="panel pick-panel">
         <view class="meal-tabs">
           <button
             wx:for="{{mealTabs}}"
             wx:key="key"
-            class="meal-tab {{item.active ? 'active' : ''}} {{item.skipped ? 'skipped' : ''}}"
+            class="meal-tab {{item.active ? 'active' : ''}} {{item.skipped ? 'skipped' : ''}} {{item.elapsed ? 'elapsed' : ''}}"
             data-meal="{{item.key}}"
             bindtap="selectMeal"
           >
             <text>{{item.label}}</text>
             <text wx:if="{{item.skipped}}">跳过</text>
-            <text wx:elif="{{item.count}}">{{item.count}}</text>
+            <text wx:elif="{{item.elapsed}}">已过</text>
+            <text wx:elif="{{item.reopened}}">补记中</text>
+            <text wx:elif="{{item.count}}">{{item.count}} 道</text>
           </button>
         </view>
         <view class="meal-line">
           <view>
             <view class="section-title">{{activeMealLabel}}</view>
-            <view class="subtitle">{{activeMealSkipped ? '这餐不需要做饭' : activeMealCount ? '已安排 ' + activeMealCount + ' 项' : '还没决定吃什么'}}</view>
+            <view class="subtitle">{{activeMealSkipped ? '这餐不需要做饭' : activeMealElapsed ? '用餐时间已过，不影响今天下单' : activeMealReopened ? '正在补记，会重新计入待定餐次' : activeMealCount ? '已安排 ' + activeMealCount + ' 项' : '还没决定吃什么'}}</view>
           </view>
           <view class="meal-actions">
-            <button class="button primary compact" wx:if="{{!activeMealSkipped}}" bindtap="openMenuSheet">选择菜单</button>
-            <button class="button ghost compact {{activeMealSkipped ? 'active' : ''}}" bindtap="toggleSkip">
+            <button wx:if="{{activeMealElapsed}}" class="button primary compact" bindtap="reopenElapsedMeal">补记{{activeMealLabel}}</button>
+            <button class="button primary compact" wx:elif="{{!activeMealSkipped}}" bindtap="openMenuSheet">选择菜单</button>
+            <button wx:if="{{activeMealReopened}}" class="button ghost compact" bindtap="keepMealElapsed">不补记了</button>
+            <button wx:elif="{{!activeMealElapsed}}" class="button ghost compact {{activeMealSkipped ? 'active' : ''}}" bindtap="toggleSkip">
               {{activeMealSkipped ? '恢复点餐' : '跳过此餐'}}
             </button>
           </view>
@@ -104,6 +125,11 @@
       </view>
 
       <view wx:if="{{activeMealSkipped}}" class="empty">已跳过{{activeMealLabel}}，这餐不会进入采购清单。</view>
+
+      <view wx:elif="{{activeMealElapsed}}" class="elapsed-notice">
+        <view class="elapsed-notice-title">{{activeMealLabel}}时间已过</view>
+        <view class="subtitle">系统只在今天自动忽略已过餐次，不会删除任何记录。需要补记时点上方按钮。</view>
+      </view>
 
       <block wx:else>
         <view wx:if="{{!menuDishes.length}}" class="empty">这个餐次暂无可选菜，可以先跳过或去“菜单”里添加新菜。</view>
@@ -133,9 +159,10 @@
         <view wx:for="{{wifeMeals}}" wx:key="meal" class="meal-summary">
           <view class="meal-summary-head">
             <text>{{item.label}}</text>
-            <text>{{item.skipped ? '已跳过' : item.empty ? '待定' : '已安排'}}</text>
+            <text>{{item.skipped ? '已跳过' : item.elapsed ? '时间已过' : item.empty ? '待定' : '已安排'}}</text>
           </view>
           <view wx:if="{{item.skipped}}" class="mini-empty">这餐不做饭。</view>
+          <view wx:elif="{{item.elapsed}}" class="mini-empty">用餐时间已过，今天无需补填。</view>
           <view wx:elif="{{item.empty}}" class="mini-empty">还没有安排。</view>
           <view wx:else>
             <view wx:for="{{item.items}}" wx:key="id" class="order-item">
@@ -148,10 +175,11 @@
               <view class="remove-btn dish-remove-btn" data-id="{{item.id}}" data-meal="{{item.meal}}" bindtap="removeDish">×</view>
             </view>
             <view wx:for="{{item.wishes}}" wx:key="id" class="order-item wish">
-              <view>
+              <view class="order-copy">
                 <view class="order-name">{{item.name}}</view>
                 <view class="subtitle">{{item.statusText}}</view>
               </view>
+              <button wx:if="{{item.recipeReady}}" class="source-btn" data-id="{{item.id}}" bindtap="openWishDetail">查看做法</button>
             </view>
           </view>
         </view>
@@ -159,6 +187,7 @@
           {{canSubmit ? '确认下单' : '还有 ' + pendingText + ' 未决定'}}
         </button>
       </view>
+      </block>
     </block>
 
     <block wx:elif="{{showHusband}}">
@@ -178,9 +207,10 @@
           <view wx:for="{{husbandMeals}}" wx:key="meal" class="cook-meal">
             <view class="meal-summary-head">
               <text>{{item.label}}</text>
-              <text>{{item.skipped ? '老婆跳过' : item.empty ? '无安排' : '共 ' + item.totalCount + ' 项'}}</text>
+              <text>{{item.skipped ? '老婆跳过' : item.elapsed ? '时间已过' : item.empty ? '无安排' : '共 ' + item.totalCount + ' 项'}}</text>
             </view>
             <view wx:if="{{item.skipped}}" class="mini-empty">这餐不用准备，采购清单已自动排除。</view>
+            <view wx:elif="{{item.elapsed}}" class="mini-empty">今天这餐已过，无需准备。</view>
             <view wx:elif="{{item.empty}}" class="mini-empty">这餐暂时没有安排。</view>
             <view wx:else>
               <view class="cook-card-grid">
@@ -208,16 +238,17 @@
                     <text>{{item.ingredientText}}</text>
                   </view>
                   <view wx:if="{{item.stepText}}" class="mini-section">
-                    <text class="mini-label">做法参考</text>
+                    <text class="mini-label">{{item.guideLabel}}</text>
                     <text>{{item.stepText}}</text>
                   </view>
                 </block>
                 <view wx:else class="mini-empty">{{item.error}}</view>
                 <view class="wish-actions">
-                  <button wx:if="{{item.sourceUrl}}" class="button ghost compact" data-url="{{item.sourceUrl}}" bindtap="copyRecipeSource">复制下厨房链接</button>
-                  <button wx:if="{{item.hasRecipe}}" class="button primary compact" data-id="{{item.id}}" bindtap="acceptWish">加入菜单</button>
+                  <button wx:if="{{item.recipeReady}}" class="button primary compact" data-id="{{item.id}}" bindtap="openWishDetail">小程序内看做法</button>
+                  <button wx:if="{{item.hasRecipe}}" class="button dark compact" data-id="{{item.id}}" bindtap="acceptWish">加入菜单</button>
                   <button class="button ghost compact" loading="{{item.searching}}" disabled="{{item.searching}}" data-id="{{item.id}}" bindtap="retryWishSearch">重新找</button>
                   <button class="button ghost compact" data-id="{{item.id}}" bindtap="declineWish">这次不做</button>
+                  <button wx:if="{{item.sourceUrl}}" class="button ghost compact" data-url="{{item.sourceUrl}}" bindtap="copyRecipeSource">复制参考来源</button>
                 </view>
               </view>
             </view>
@@ -403,7 +434,7 @@
             </view>
 
             <view class="detail-section">
-              <view class="mini-label">做法</view>
+              <view class="mini-label">{{detailDish.guideLabel}}</view>
               <view wx:for="{{detailDish.steps}}" wx:key="index" class="step-card">
                 <view class="step-index">{{item.index}}</view>
                 <view class="step-body">
@@ -413,7 +444,7 @@
               </view>
             </view>
 
-            <button wx:if="{{detailDish.sourceUrl}}" class="button primary detail-source" data-url="{{detailDish.sourceUrl}}" bindtap="copyRecipeSource">复制下厨房链接</button>
+            <button wx:if="{{detailDish.sourceUrl}}" class="button ghost detail-source" data-url="{{detailDish.sourceUrl}}" bindtap="copyRecipeSource">复制参考来源（可选）</button>
           </view>
         </scroll-view>
       </view>

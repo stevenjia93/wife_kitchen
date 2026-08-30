@@ -24,7 +24,9 @@ const {
   selectedDishCount,
   wishCount,
   mealItemCount,
-  unresolvedMeals,
+  isMealTimeElapsed,
+  elapsedMeals,
+  actionableUnresolvedMeals,
   canViewOrder,
   canUploadMealPhotos,
   planFoodTargets,
@@ -194,7 +196,14 @@ Page({
   refreshView() {
     const dateKey = this.data.dateKey;
     const plan = ensurePlan(this.state, dateKey);
-    const pending = unresolvedMeals(plan);
+    const elapsed = elapsedMeals(plan, dateKey);
+    const elapsedSet = new Set(elapsed);
+    const reopenedSet = new Set(
+      mealOrder.filter(
+        (meal) => plan.reopened[meal] && isMealTimeElapsed(meal, dateKey) && !plan.skipped[meal] && !mealItemCount(plan, meal)
+      )
+    );
+    const pending = actionableUnresolvedMeals(plan, dateKey);
     const dishes = this.filteredDishes();
     const featuredIndex = dishes.length ? Math.min(this.data.featuredIndex, dishes.length - 1) : 0;
     const activeDish = dishes[featuredIndex] || null;
@@ -217,25 +226,30 @@ Page({
       showWife: activeTab === "wife",
       showHusband: activeTab === "husband",
       showMenu: activeTab === "menu",
+      showOrderConfirmation: activeTab === "wife" && plan.submitted,
       showPhotoPanel: activeTab === "wife" && (orderVisible || photos.length > 0),
       dateTitle: dayLabel(dateKey),
-      dateMeta: `${dateModeText(dateKey)} · ${selectedDishCount(plan) + wishCount(plan)} 项已选 · ${
-        pending.length ? `${pending.length} 餐待定` : "三餐已决定"
-      }`,
+      dateMeta: buildDateMeta(dateKey, plan, pending, elapsed),
       featuredIndex,
       editable: isEditableDate(dateKey),
       canSubmit: isEditableDate(dateKey) && !pending.length,
       pendingText: pending.map((meal) => mealLabels[meal]).join("、"),
       orderStatus: plan.submitted ? `已下单 ${formatTime(plan.submittedAt)}` : pending.length ? "还有餐次未决定" : "可以下单了",
+      submittedTimeText: formatTime(plan.submittedAt),
+      confirmationItemCount: selectedDishCount(plan) + wishCount(plan),
       mealTabs: mealOrder.map((meal) => ({
         key: meal,
         label: mealLabels[meal],
         active: this.data.meal === meal,
         skipped: plan.skipped[meal],
+        elapsed: elapsedSet.has(meal),
+        reopened: reopenedSet.has(meal),
         count: mealItemCount(plan, meal)
       })),
       activeMealLabel: mealLabels[this.data.meal],
       activeMealSkipped: plan.skipped[this.data.meal],
+      activeMealElapsed: elapsedSet.has(this.data.meal),
+      activeMealReopened: reopenedSet.has(this.data.meal),
       activeMealCount: mealItemCount(plan, this.data.meal),
       activeMealItems,
       filteredDishes: dishes.map((dish, index) => this.buildDishThumb(dish, index, featuredIndex)),
@@ -243,8 +257,8 @@ Page({
       managedDishes,
       activeDish: activeDish ? this.buildDishView(activeDish, plan) : null,
       selectedCurrent: Boolean(activeDish && plan[this.data.meal].includes(activeDish.id)),
-      wifeMeals: this.buildWifeMeals(plan),
-      husbandMeals: this.buildHusbandMeals(plan),
+      wifeMeals: this.buildWifeMeals(plan, elapsedSet),
+      husbandMeals: this.buildHusbandMeals(plan, elapsedSet),
       canViewOrder: orderVisible,
       canViewMenu: orderVisible || hasMenuDraft,
       kitchenStatus: orderVisible ? "按餐次看菜、原料和做法。" : hasMenuDraft ? "这是当前草稿菜单，可以继续调整。" : "还没有设定菜单。",
@@ -334,7 +348,7 @@ Page({
     return [...dishes, ...wishes];
   },
 
-  buildWifeMeals(plan) {
+  buildWifeMeals(plan, elapsedSet = new Set()) {
     return mealOrder.map((meal) => {
       const ids = plan[meal] || [];
       const wishes = wishesForMeal(plan, meal);
@@ -342,6 +356,7 @@ Page({
         meal,
         label: mealLabels[meal],
         skipped: plan.skipped[meal],
+        elapsed: elapsedSet.has(meal),
         empty: !ids.length && !wishes.length,
         items: ids.map((id) => {
           const dish = getDish(this.state, id);
@@ -356,16 +371,12 @@ Page({
               }
             : null;
         }).filter(Boolean),
-        wishes: wishes.map((wish) => ({
-          ...wish,
-          mealLabel: mealLabels[wish.meal],
-          statusText: wishStatusText(wish)
-        }))
+        wishes: wishes.map((wish) => this.buildWishView(wish))
       };
     });
   },
 
-  buildHusbandMeals(plan) {
+  buildHusbandMeals(plan, elapsedSet = new Set()) {
     return mealOrder.map((meal) => {
       const ids = plan[meal] || [];
       const wishes = wishesForMeal(plan, meal);
@@ -373,6 +384,7 @@ Page({
         meal,
         label: mealLabels[meal],
         skipped: plan.skipped[meal],
+        elapsed: elapsedSet.has(meal),
         empty: !ids.length && !wishes.length,
         totalCount: ids.length + wishes.length,
         items: ids.map((id) => {
@@ -412,12 +424,14 @@ Page({
       statusText: wishStatusText(wish),
       searching: wish.status === "searching",
       hasRecipe: Boolean(recipe.name || recipe.sourceUrl),
+      recipeReady: ingredients.length > 0 && steps.length > 0,
       recipeName: recipe.name || wish.name,
       sourceUrl: recipe.sourceUrl || "",
       ratingText: recipe.searchRating ? `评分 ${recipe.searchRating}` : "",
       cookedText: recipe.searchCookedCount ? `${recipe.searchCookedCount} 人做过` : "",
       ingredientText: ingredients.slice(0, 10).join("、"),
       stepText: steps.slice(0, 5).join(" / "),
+      guideLabel: recipeGuideLabel(recipe.guideSource),
       error: wish.error || "暂时没找到参考菜谱。"
     };
   },
@@ -436,7 +450,7 @@ Page({
 
   buildDishDetail(dish) {
     const steps = dishStepItems(dish);
-    const visibleSteps = steps.length ? steps : [{ text: "复制下厨房链接，查看完整步骤。", image: "", imageUrl: "" }];
+    const visibleSteps = steps.length ? steps : fallbackStepsForDish(dish);
     return {
       id: dish.id,
       name: dish.name,
@@ -446,6 +460,7 @@ Page({
       imageSrc: dishImageSrc(dish),
       imageInitial: dish.name.slice(0, 1),
       sourceUrl: dish.sourceUrl || "",
+      guideLabel: recipeGuideLabel(dish.guideSource),
       ingredients: (dish.ingredients || []).map((item) => ({ text: formatIngredient(item) })),
       steps: visibleSteps.map((step, index) => ({
         index: index + 1,
@@ -665,9 +680,27 @@ Page({
     const meal = this.data.meal;
     plan.skipped[meal] = !plan.skipped[meal];
     if (plan.skipped[meal]) {
+      plan.reopened[meal] = false;
       plan[meal] = [];
       plan.wishes = (plan.wishes || []).filter((wish) => wish.meal !== meal);
+    } else if (elapsedMeals(plan, this.data.dateKey).includes(meal)) {
+      plan.reopened[meal] = true;
     }
+    markPlanDraft(plan);
+    this.persistState();
+  },
+
+  reopenElapsedMeal() {
+    if (!isEditableDate(this.data.dateKey)) return showToast("历史日期只能查看");
+    const plan = ensurePlan(this.state, this.data.dateKey);
+    plan.reopened[this.data.meal] = true;
+    markPlanDraft(plan);
+    this.persistState();
+  },
+
+  keepMealElapsed() {
+    const plan = ensurePlan(this.state, this.data.dateKey);
+    plan.reopened[this.data.meal] = false;
     markPlanDraft(plan);
     this.persistState();
   },
@@ -731,6 +764,16 @@ Page({
       detailOpen: true,
       detailDish: this.buildDishDetail(dish)
     });
+  },
+
+  openWishDetail(event) {
+    const found = this.findWishLocation(event.currentTarget.dataset.id);
+    if (!found?.wish?.recipe) return showToast("做法还在整理中");
+    const dish = dishFromRecipe(found.wish.recipe, found.wish.name);
+    dish.meals = [found.wish.meal];
+    dish.note = found.wish.recipe.note || "根据高分菜谱整理的家庭参考做法。";
+    dish.guideSource = found.wish.recipe.guideSource || "";
+    this.setData({ detailOpen: true, detailDish: this.buildDishDetail(dish) });
   },
 
   closeDishDetail() {
@@ -974,13 +1017,22 @@ Page({
   submitOrder() {
     if (!isEditableDate(this.data.dateKey)) return showToast("历史日期只能查看");
     const plan = ensurePlan(this.state, this.data.dateKey);
-    const pending = unresolvedMeals(plan);
+    const pending = actionableUnresolvedMeals(plan, this.data.dateKey);
     if (pending.length) return showToast(`还有 ${pending.map((meal) => mealLabels[meal]).join("、")} 未决定`);
     plan.submitted = true;
     plan.submittedAt = new Date().toISOString();
     plan.notificationUnread = true;
     this.persistState();
-    showToast("已下单", "success");
+  },
+
+  editSubmittedOrder() {
+    const plan = ensurePlan(this.state, this.data.dateKey);
+    markPlanDraft(plan);
+    this.persistState();
+  },
+
+  goKitchenAfterOrder() {
+    this.setData({ role: "husband", activeTab: "husband", menuOpen: false, detailOpen: false }, () => this.refreshView());
   },
 
   async copyShoppingList() {
@@ -1320,6 +1372,13 @@ function markPlanDraft(plan) {
   plan.notificationUnread = false;
 }
 
+function buildDateMeta(dateKey, plan, pending, elapsed) {
+  const parts = [dateModeText(dateKey), `${selectedDishCount(plan) + wishCount(plan)} 项已选`];
+  if (elapsed.length) parts.push(`${elapsed.length} 餐已过`);
+  parts.push(pending.length ? `${pending.length} 餐待定` : "当前无需再决定");
+  return parts.join(" · ");
+}
+
 function categoryClass(category) {
   if (category === "肉菜") return "meat";
   if (category === "蔬菜") return "green";
@@ -1447,11 +1506,29 @@ function dishFromRecipe(recipe, fallbackName) {
     image,
     imageUrl: image,
     sourceUrl: String((recipe && recipe.sourceUrl) || "").trim(),
+    guideSource: String((recipe && recipe.guideSource) || "").trim(),
     ingredients,
     steps: Array.isArray(recipe && recipe.steps) ? recipe.steps.map((step) => String(step || "").trim()).filter(Boolean).slice(0, 12) : [],
     stepDetails: Array.isArray(recipe && recipe.stepDetails) ? recipe.stepDetails.map(normalizeStepItem).filter((step) => step.text || step.image || step.imageUrl).slice(0, 12) : [],
     note: String((recipe && recipe.note) || "从下厨房导入。").trim().slice(0, 80)
   };
+}
+
+function fallbackStepsForDish(dish = {}) {
+  const ingredients = (dish.ingredients || []).map((item) => item.name).filter(Boolean);
+  const ingredientText = ingredients.slice(0, 5).join("、") || "食材";
+  return [
+    { text: `准备${ingredientText}，洗净切配并把调味料放在手边。`, image: "", imageUrl: "" },
+    { text: "锅烧热后按食材成熟速度依次下锅，先处理较难熟的主料。", image: "", imageUrl: "" },
+    { text: "加入调味料翻炒或焖煮至熟，过程中少量多次调整咸淡。", image: "", imageUrl: "" },
+    { text: "确认食材熟透后收汁或关火，装盘后趁热享用。", image: "", imageUrl: "" }
+  ];
+}
+
+function recipeGuideLabel(source) {
+  if (source === "qwen") return "千问整理的参考做法";
+  if (source === "local") return "家庭参考做法";
+  return "小程序内做法";
 }
 
 function recipeIngredient(value) {

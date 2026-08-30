@@ -286,6 +286,13 @@
   font-weight: 900;
 }
 
+.meal-tab text + text {
+  margin-top: 2rpx;
+  font-size: 19rpx;
+  font-weight: 800;
+  opacity: 0.76;
+}
+
 .meal-tab + .meal-tab {
   margin-left: 10rpx;
 }
@@ -297,6 +304,30 @@
 
 .meal-tab.skipped:not(.active) {
   background: rgba(126, 153, 166, 0.14);
+}
+
+.meal-tab.elapsed:not(.active) {
+  border-style: dashed;
+  background: rgba(22, 24, 23, 0.04);
+  color: #8a8f88;
+}
+
+.elapsed-notice {
+  margin-top: 16rpx;
+  border: 1rpx dashed rgba(22, 24, 23, 0.16);
+  border-radius: 16rpx;
+  background: rgba(255, 255, 255, 0.42);
+  padding: 22rpx;
+}
+
+.elapsed-notice-title {
+  color: #404640;
+  font-size: 27rpx;
+  font-weight: 950;
+}
+
+.elapsed-notice .subtitle {
+  margin-top: 6rpx;
 }
 
 .meal-line,
@@ -668,6 +699,85 @@
 
 .submit-btn {
   margin-top: 22rpx;
+}
+
+.order-confirmation {
+  margin-top: 16rpx;
+  padding: 34rpx 24rpx 24rpx;
+  text-align: center;
+}
+
+.confirmation-kicker {
+  width: 120rpx;
+  margin: 0 auto;
+  border-radius: 999rpx;
+  background: rgba(70, 116, 87, 0.12);
+  color: #467457;
+  font-size: 22rpx;
+  font-weight: 950;
+  line-height: 52rpx;
+}
+
+.confirmation-title {
+  margin-top: 18rpx;
+  color: #171917;
+  font-size: 40rpx;
+  font-weight: 950;
+  line-height: 1.15;
+}
+
+.confirmation-subtitle {
+  margin-top: 8rpx;
+}
+
+.confirmation-count {
+  margin-top: 26rpx;
+  color: #171917;
+  font-size: 72rpx;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.confirmation-count-label {
+  margin-top: 6rpx;
+  color: #7c786c;
+  font-size: 21rpx;
+  font-weight: 800;
+}
+
+.confirmation-meals {
+  margin-top: 24rpx;
+  border-radius: 16rpx;
+  background: rgba(255, 255, 255, 0.56);
+  padding: 4rpx 18rpx;
+  text-align: left;
+}
+
+.confirmation-meal {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 68rpx;
+  border-bottom: 1rpx solid rgba(22, 24, 23, 0.08);
+  color: #4d554f;
+  font-size: 24rpx;
+  font-weight: 850;
+}
+
+.confirmation-meal:last-child {
+  border-bottom: 0;
+}
+
+.confirmation-meal text:last-child {
+  color: #467457;
+}
+
+.confirmation-primary {
+  margin-top: 24rpx;
+}
+
+.confirmation-secondary {
+  margin-top: 12rpx;
 }
 
 .cook-card {

@@ -45,6 +45,7 @@ DATABASE_URL=postgresql://... npm start
 ```text
 DASHSCOPE_API_KEY=...
 DASHSCOPE_VISION_MODEL=qwen3-vl-plus
+DASHSCOPE_RECIPE_MODEL=qwen-plus
 DASHSCOPE_IMAGE_MODEL=qwen-image-3.0-pro
 DASHSCOPE_IMAGE_SIZE=1024*1280
 ```

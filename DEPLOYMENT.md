@@ -44,6 +44,8 @@ POSTGRES_USER=wife_kitchen
 POSTGRES_PASSWORD=替换为至少32位随机密码
 DATABASE_SSL=disable
 DATABASE_POOL_MAX=10
+DASHSCOPE_API_KEY=替换为阿里云百炼密钥
+DASHSCOPE_RECIPE_MODEL=qwen-plus
 ```
 
 系统用户和数据库角色统一使用 `wife_kitchen`，PostgreSQL 的 `pg_hba.conf` 仅允许这个同名本机用户通过 peer 认证。需要更高可用性时再迁移到同地域 RDS PostgreSQL：设置 `DATABASE_URL`、RDS 内网白名单和 SSL 即可，应用代码无需改变。
