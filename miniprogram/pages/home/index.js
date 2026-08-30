@@ -224,7 +224,7 @@ Page({
       showHusband: activeTab === "husband",
       showMenu: activeTab === "menu",
       showOrderConfirmation: activeTab === "wife" && plan.submitted,
-      showPhotoPanel: activeTab === "wife" && (orderVisible || photos.length > 0),
+      showPhotoPanel: activeTab === "wife",
       dateTitle: dayLabel(dateKey),
       dateMeta: buildDateMeta(dateKey, plan, pending, elapsed),
       featuredIndex,
@@ -1053,7 +1053,7 @@ Page({
   async uploadMealPhoto() {
     const plan = ensurePlan(this.state, this.data.dateKey);
     if (!canUploadMealPhotos(this.state, plan, this.data.dateKey)) {
-      showToast("今天确认下单后才能上传成品照");
+      showToast("历史日期不能再上传照片");
       return;
     }
     try {

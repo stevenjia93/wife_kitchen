@@ -257,7 +257,7 @@ function emptyPlan() {
 
 function createDefaultState() {
   return {
-    dishes: starterDishes,
+    dishes: [],
     plans: { [todayKey()]: emptyPlan() },
     feedback: {},
     checkedItems: {},
@@ -472,7 +472,7 @@ function canViewOrder(plan, key) {
 }
 
 function canUploadMealPhotos(state, plan, key) {
-  return key === todayKey() && canViewOrder(plan, key) && planFoodTargets(state, plan).length > 0;
+  return Boolean(state && plan && key) && isEditableDate(key);
 }
 
 function planFoodTargets(state, plan) {
