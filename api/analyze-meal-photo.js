@@ -5,54 +5,78 @@ const DEFAULT_VISION_MODEL = "qwen3-vl-plus";
 const DEFAULT_IMAGE_MODEL = "qwen-image-3.0-pro";
 const SHARE_IMAGE_WIDTH = 1024;
 const SHARE_IMAGE_HEIGHT = 1280;
+const PHOTO_ANALYSIS_DAILY_LIMIT = 3;
+const defaultDatabase = require("../server/database");
+const defaultAuth = require("../server/auth");
 
-async function handler(req, res) {
-  res.setHeader("Cache-Control", "no-store");
-  if (req.method === "OPTIONS") {
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.status(204).end();
-    return;
-  }
+function createHandler(database = defaultDatabase, auth = defaultAuth, services = {}) {
+  const analyzePhoto = services.analyzeMealPhoto || analyzeMealPhoto;
+  const standardizePhoto = services.standardizeImage || standardizeImage;
+  const startShareTask = services.startMealShareImageTask || startMealShareImageTask;
+  const getShareTask = services.getMealShareImageTask || getMealShareImageTask;
 
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Method not allowed" });
-    return;
-  }
-
-  try {
-    const body = await readJsonBody(req);
-    const includeShareImage = Boolean(body.includeShareImage);
-    const suppliedAnalysis = includeShareImage ? normalizeAnalysis(body.analysis) : null;
-    if (includeShareImage && body.shareTaskId) {
-      if (!suppliedAnalysis?.items?.length) throw httpError("分享图缺少热量分析结果", 400);
-      const shareResult = await getMealShareImageTask(body.shareTaskId, suppliedAnalysis);
-      res.status(200).json({
-        analysis: suppliedAnalysis,
-        shareImage: shareResult.shareImage,
-        shareTaskId: shareResult.taskId,
-        shareStatus: shareResult.status
-      });
+  return async function handler(req, res) {
+    res.setHeader("Cache-Control", "no-store");
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.status(204).end();
       return;
     }
 
-    const image = await standardizeImage(normalizeImage(body.image));
-    const targetNames = normalizeTargetNames(body.targetNames);
-    const analysis = suppliedAnalysis?.items?.length ? suppliedAnalysis : await analyzeMealPhoto(image, targetNames);
-    if (includeShareImage) {
-      const shareResult = await startMealShareImageTask(image, analysis);
-      res.status(200).json({
-        analysis,
-        shareImage: "",
-        shareTaskId: shareResult.taskId,
-        shareStatus: shareResult.status
-      });
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed" });
       return;
     }
-    res.status(200).json({ analysis, shareImage: "" });
-  } catch (error) {
-    res.status(error.statusCode || 400).json({ error: error.message || "热量估算失败" });
-  }
+
+    try {
+      const body = await readJsonBody(req);
+      const user = await auth.requireUser(req, database);
+      const householdId = normalizeHouseholdId(body.householdId);
+      const membership = await database.findHouseholdMembership(user.id, householdId);
+      if (!membership) throw httpError("你不是这个家庭的成员", 403);
+      const includeShareImage = Boolean(body.includeShareImage);
+      const suppliedAnalysis = includeShareImage ? normalizeAnalysis(body.analysis) : null;
+      if (includeShareImage && body.shareTaskId) {
+        if (!suppliedAnalysis?.items?.length) throw httpError("分享图缺少热量分析结果", 400);
+        const shareResult = await getShareTask(body.shareTaskId, suppliedAnalysis);
+        res.status(200).json({
+          analysis: suppliedAnalysis,
+          shareImage: shareResult.shareImage,
+          shareTaskId: shareResult.taskId,
+          shareStatus: shareResult.status
+        });
+        return;
+      }
+
+      const image = await standardizePhoto(normalizeImage(body.image));
+      const targetNames = normalizeTargetNames(body.targetNames);
+      let usage = null;
+      let analysis = suppliedAnalysis;
+      if (!analysis?.items?.length) {
+        usage = await database.consumeHouseholdPhotoAnalysis({
+          householdId,
+          usageDate: usageDateShanghai(),
+          limit: PHOTO_ANALYSIS_DAILY_LIMIT
+        });
+        analysis = await analyzePhoto(image, targetNames);
+      }
+      if (includeShareImage) {
+        const shareResult = await startShareTask(image, analysis);
+        res.status(200).json({
+          analysis,
+          shareImage: "",
+          shareTaskId: shareResult.taskId,
+          shareStatus: shareResult.status,
+          usage
+        });
+        return;
+      }
+      res.status(200).json({ analysis, shareImage: "", usage });
+    } catch (error) {
+      res.status(error.statusCode || 400).json({ error: error.message || "热量估算失败" });
+    }
+  };
 }
 
 async function analyzeMealPhoto(image, targetNames = []) {
@@ -495,13 +519,31 @@ function cleanText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function normalizeHouseholdId(value) {
+  const id = String(value || "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw httpError("家庭编号不正确", 400);
+  }
+  return id;
+}
+
+function usageDateShanghai(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(now);
+}
+
 function httpError(message, statusCode) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
 }
 
-module.exports = handler;
+module.exports = createHandler();
+module.exports.createHandler = createHandler;
 module.exports._internals = {
   analyzeMealPhoto,
   buildPrompt,
@@ -512,7 +554,9 @@ module.exports._internals = {
   getMealShareImageTask,
   normalizeAnalysis,
   normalizeImage,
+  normalizeHouseholdId,
   parseJsonText,
   startMealShareImageTask,
-  standardizeImage
+  standardizeImage,
+  usageDateShanghai
 };

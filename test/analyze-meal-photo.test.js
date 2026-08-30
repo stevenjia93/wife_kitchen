@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const sharp = require("sharp");
 
+const analyzeMealPhotoModule = require("../api/analyze-meal-photo");
+const { createHandler } = analyzeMealPhotoModule;
 const {
   analyzeMealPhoto,
   buildPrompt,
@@ -11,8 +13,93 @@ const {
   getMealShareImageTask,
   parseJsonText,
   startMealShareImageTask,
-  standardizeImage
-} = require("../api/analyze-meal-photo")._internals;
+  standardizeImage,
+  usageDateShanghai
+} = analyzeMealPhotoModule._internals;
+
+test("照片识别验证家庭成员并原子消耗每日额度", async () => {
+  const householdId = "11111111-1111-4111-8111-111111111111";
+  let consumed;
+  const database = {
+    findHouseholdMembership: async (userId, id) => {
+      assert.equal(userId, "user-1");
+      assert.equal(id, householdId);
+      return { role: "member" };
+    },
+    consumeHouseholdPhotoAnalysis: async (input) => {
+      consumed = input;
+      return { used: 2, remaining: 1, limit: 3 };
+    }
+  };
+  const auth = { requireUser: async () => ({ id: "user-1" }) };
+  const response = responseRecorder();
+  const handler = createHandler(database, auth, {
+    standardizeImage: async (image) => image,
+    analyzeMealPhoto: async () => ({ totalCalories: 320, confidence: "medium", items: [{ label: "番茄炒蛋" }] })
+  });
+
+  await handler(
+    {
+      method: "POST",
+      body: { householdId, image: "data:image/jpeg;base64,AA==", includeShareImage: false }
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body.usage, { used: 2, remaining: 1, limit: 3 });
+  assert.equal(consumed.householdId, householdId);
+  assert.equal(consumed.limit, 3);
+  assert.match(consumed.usageDate, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test("已有识别结果生成分享图时不重复消耗照片识别额度", async () => {
+  const householdId = "22222222-2222-4222-8222-222222222222";
+  const database = {
+    findHouseholdMembership: async () => ({ role: "owner" }),
+    consumeHouseholdPhotoAnalysis: async () => assert.fail("share generation must not consume recognition quota")
+  };
+  const auth = { requireUser: async () => ({ id: "user-2" }) };
+  const response = responseRecorder();
+  const handler = createHandler(database, auth, {
+    standardizeImage: async (image) => image,
+    startMealShareImageTask: async () => ({ taskId: "task-1", status: "PENDING" })
+  });
+
+  await handler(
+    {
+      method: "POST",
+      body: {
+        householdId,
+        image: "data:image/jpeg;base64,AA==",
+        includeShareImage: true,
+        analysis: {
+          totalCalories: 320,
+          confidence: "medium",
+          items: [
+            {
+              label: "番茄炒蛋",
+              portion: "约1盘",
+              calories: 320,
+              confidence: "medium",
+              bbox: { x: 0.1, y: 0.1, width: 0.6, height: 0.5 }
+            }
+          ]
+        }
+      }
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.shareTaskId, "task-1");
+  assert.equal(response.body.usage, null);
+});
+
+test("每日额度按上海自然日计算", () => {
+  assert.equal(usageDateShanghai(new Date("2026-08-30T15:59:59.000Z")), "2026-08-30");
+  assert.equal(usageDateShanghai(new Date("2026-08-30T16:00:00.000Z")), "2026-08-31");
+});
 
 test("千问 VL 使用百炼北京兼容接口并规范化分析结果", async () => {
   const originalFetch = global.fetch;
@@ -226,4 +313,26 @@ test("百炼响应可兼容 JSON 代码块且缺少密钥时给出明确错误",
 function restoreEnv(name, value) {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
+}
+
+function responseRecorder() {
+  return {
+    headers: {},
+    statusCode: 200,
+    body: null,
+    setHeader(name, value) {
+      this.headers[name] = value;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(value) {
+      this.body = value;
+      return this;
+    },
+    end() {
+      return this;
+    }
+  };
 }

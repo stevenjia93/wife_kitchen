@@ -319,15 +319,18 @@
         </view>
         <view wx:if="{{!managedDishes.length}}" class="empty">还没有菜，先从下厨房导入一道。</view>
         <view wx:for="{{managedDishes}}" wx:key="id" class="managed-dish" data-id="{{item.id}}" bindtap="openDishDetail">
-          <image wx:if="{{item.imageSrc}}" class="managed-thumb" src="{{item.imageSrc}}" mode="aspectFill"></image>
-          <view wx:else class="managed-thumb placeholder">{{item.imageInitial}}</view>
-          <view class="managed-copy">
-            <view class="order-name">{{item.name}}</view>
-            <view class="subtitle">{{item.meta}}</view>
-            <view class="managed-ingredients">{{item.ingredientText}}</view>
+          <view class="managed-main">
+            <image wx:if="{{item.imageSrc}}" class="managed-thumb" src="{{item.imageSrc}}" mode="aspectFill"></image>
+            <view wx:else class="managed-thumb placeholder">{{item.imageInitial}}</view>
+            <view class="managed-copy">
+              <view class="order-name">{{item.name}}</view>
+              <view class="subtitle">{{item.meta}}</view>
+              <view class="managed-ingredients">{{item.ingredientText}}</view>
+            </view>
           </view>
           <view class="managed-actions">
-            <button wx:if="{{item.sourceUrl}}" class="source-btn" data-url="{{item.sourceUrl}}" catchtap="copyRecipeSource">来源</button>
+            <button wx:if="{{item.sourceUrl}}" class="managed-source-btn" data-url="{{item.sourceUrl}}" catchtap="copyRecipeSource">查看来源</button>
+            <view wx:else class="source-empty">家庭菜谱</view>
             <view class="delete-menu-btn" data-id="{{item.id}}" catchtap="removeManagedDish">×</view>
           </view>
         </view>
@@ -338,13 +341,13 @@
       <view class="panel-head">
         <view>
           <view class="section-title">AI 热量估算</view>
-          <view class="subtitle">{{photoCount ? photoCount + ' 张照片，' + analyzedCount + ' 张已完成' : '拍一张整桌照，自动估算热量。'}}</view>
+          <view class="subtitle">{{photoPanelSubtitle}}</view>
         </view>
-        <view class="pill">{{photoCount}}</view>
+        <view class="pill">剩 {{photoAttemptsRemaining}} 次</view>
       </view>
-      <button wx:if="{{canUploadPhotos}}" class="upload-card" bindtap="uploadMealPhoto">
-        <text>上传整桌照</text>
-        <text>按照片识别菜品，再估算 kcal 和生成分享图</text>
+      <button wx:if="{{showUploadButton}}" class="upload-card" disabled="{{!canUploadPhotos}}" bindtap="uploadMealPhoto">
+        <text>{{uploadPhotoText}}</text>
+        <text>{{uploadPhotoHint}}</text>
       </button>
       <view wx:for="{{photos}}" wx:key="id" class="photo-card">
         <view wx:if="{{item.displayImage}}" class="meal-photo-frame">

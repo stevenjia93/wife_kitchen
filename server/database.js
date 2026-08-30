@@ -90,6 +90,22 @@ async function saveHouseholdState(householdId, payload) {
   return result.rows[0]?.updated_at || new Date();
 }
 
+async function consumeHouseholdPhotoAnalysis({ householdId, usageDate, limit }) {
+  const result = await getPool().query(
+    `insert into household_ai_usage_daily (household_id, usage_date, photo_analysis_count)
+     values ($1, $2, 1)
+     on conflict (household_id, usage_date) do update
+       set photo_analysis_count = household_ai_usage_daily.photo_analysis_count + 1,
+           updated_at = now()
+       where household_ai_usage_daily.photo_analysis_count < $3
+     returning photo_analysis_count`,
+    [householdId, usageDate, limit]
+  );
+  if (!result.rowCount) throw serviceError(`今天的 ${limit} 次照片识别已用完`, 429);
+  const used = Number(result.rows[0].photo_analysis_count || 0);
+  return { used, remaining: Math.max(0, limit - used), limit };
+}
+
 async function upsertWechatUser({ openid, unionid }) {
   const result = await getPool().query(
     `insert into users (wechat_openid, wechat_unionid)
@@ -332,6 +348,7 @@ function serviceError(message, statusCode) {
 module.exports = {
   checkConnection,
   claimLegacyHousehold,
+  consumeHouseholdPhotoAnalysis,
   connectionOptions,
   createHouseholdForUser,
   createHouseholdInvitation,

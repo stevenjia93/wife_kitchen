@@ -37,4 +37,14 @@ test("keeps meal photo upload available before an order is submitted", () => {
   const tomorrow = dateFromKey(todayKey());
   tomorrow.setDate(tomorrow.getDate() + 1);
   assert.equal(canUploadMealPhotos(state, plan, dateKeyFromDate(tomorrow)), true);
+
+  state.photoAnalysisUsage.count = 3;
+  assert.equal(canUploadMealPhotos(state, plan, todayKey()), false);
+});
+
+test("blocks replacing a photo while AI processing is still running", () => {
+  const state = createDefaultState();
+  const plan = emptyPlan();
+  plan.afterPhotos = [{ id: "photo-1", analysisStatus: "loading", shareStatus: "idle" }];
+  assert.equal(canUploadMealPhotos(state, plan, todayKey()), false);
 });
