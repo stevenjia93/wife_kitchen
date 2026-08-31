@@ -62,6 +62,41 @@ test("saves compacted state without embedded data images", async () => {
   assert.equal(JSON.stringify(savedPayload).includes("data:image"), false);
 });
 
+test("keeps the household cover in shared state while stripping transient meal media", async () => {
+  const householdId = "66666666-6666-4666-8666-666666666666";
+  const cover = "data:image/jpeg;base64,family-cover";
+  let savedPayload;
+  const database = {
+    findHouseholdMembership: async () => ({ role: "member", name: "我们的家" }),
+    saveHouseholdState: async (_householdId, payload) => {
+      savedPayload = payload;
+      return new Date("2026-08-31T02:00:00.000Z");
+    }
+  };
+  const auth = { requireUser: async () => ({ id: "user-cover" }) };
+  const response = responseRecorder();
+
+  await createHandler(database, auth)(
+    {
+      method: "POST",
+      body: {
+        householdId,
+        payload: {
+          householdCover: cover,
+          plans: {
+            "2026-08-31": { afterPhotos: [{ id: "photo-1", image: "data:image/jpeg;base64,meal" }] }
+          }
+        }
+      }
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(savedPayload.householdCover, cover);
+  assert.equal(savedPayload.plans["2026-08-31"].afterPhotos[0].image, "");
+});
+
 test("rejects an invalid household id before membership access", async () => {
   const database = {
     findHouseholdMembership: async () => assert.fail("invalid input must not access database")

@@ -4,6 +4,7 @@ const {
   createDefaultState,
   emptyPlan,
   canUploadMealPhotos,
+  normalizeAppState,
   todayKey,
   dateFromKey,
   dateKeyFromDate
@@ -47,4 +48,12 @@ test("blocks replacing a photo while AI processing is still running", () => {
   const plan = emptyPlan();
   plan.afterPhotos = [{ id: "photo-1", analysisStatus: "loading", shareStatus: "idle" }];
   assert.equal(canUploadMealPhotos(state, plan, todayKey()), false);
+});
+
+test("keeps a valid shared household cover and rejects oversized cover data", () => {
+  const cover = `data:image/jpeg;base64,${"a".repeat(120)}`;
+  assert.equal(normalizeAppState({ householdCover: cover }).householdCover, cover);
+
+  const oversized = `data:image/jpeg;base64,${"a".repeat(1_200_001)}`;
+  assert.equal(normalizeAppState({ householdCover: oversized }).householdCover, "");
 });

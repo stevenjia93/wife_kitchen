@@ -43,3 +43,32 @@ test("meal defaults stay behind settings and dish meal tags use fixed square con
   assert.match(source, /openMealSettings\(\) \{\s*this\.setData\(\{ mealSettingsOpen: true \}\)/);
   assert.match(styles, /\.meal-square \{[\s\S]*width: 52rpx[\s\S]*max-width: 52rpx[\s\S]*height: 52rpx/);
 });
+
+test("calendar uses six explicit seven-column rows instead of wrapping native buttons", () => {
+  const source = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.js"), "utf8");
+  const template = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxml"), "utf8");
+  const styles = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxss"), "utf8");
+
+  assert.match(source, /calendarWeeks:\s*chunkCalendarWeeks\(/);
+  assert.match(template, /wx:for="\{\{calendarWeeks\}\}"[^>]*class="calendar-week"/);
+  assert.doesNotMatch(template, /wx:for="\{\{calendarDays\}\}"/);
+  assert.match(styles, /\.calendar-week \{[\s\S]*display: flex[\s\S]*width: 100%/);
+  assert.match(styles, /\.calendar-day \{[\s\S]*flex: 1 1 0[\s\S]*width: 0/);
+});
+
+test("household banner supports a shared user-selected cover", () => {
+  const source = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.js"), "utf8");
+  const template = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxml"), "utf8");
+  const styles = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxss"), "utf8");
+  const privacy = fs.readFileSync(path.join(projectRoot, "miniprogram/privacy-notice.txt"), "utf8");
+
+  assert.match(template, /class="topbar panel \{\{householdId \? 'family-hero' : ''\}\}"/);
+  assert.match(template, /class="family-cover"[^>]*src="\{\{householdCover\}\}"/);
+  assert.match(template, /bindtap="changeHouseholdCover"/);
+  assert.match(source, /changeHouseholdCover\(\)/);
+  assert.match(source, /this\.state\.householdCover = cover/);
+  assert.match(source, /compressedWidth:\s*1200/);
+  assert.match(styles, /\.family-hero \{/);
+  assert.match(styles, /\.family-cover,/);
+  assert.match(privacy, /家庭封面/);
+});

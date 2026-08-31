@@ -1,6 +1,14 @@
 <view class="page">
-  <view class="topbar panel">
-    <view class="brand">
+  <view class="topbar panel {{householdId ? 'family-hero' : ''}}">
+    <image wx:if="{{householdId && householdCover}}" class="family-cover" src="{{householdCover}}" mode="aspectFill"></image>
+    <view wx:if="{{householdId}}" class="family-cover-shade"></view>
+    <view wx:if="{{householdId && !householdCover}}" class="family-cover-default">
+      <text class="family-cover-kicker">OUR LITTLE KITCHEN</text>
+      <text class="family-cover-note">好好吃饭，慢慢生活</text>
+      <text class="family-cover-doodle">♡</text>
+    </view>
+    <button wx:if="{{householdId}}" class="cover-change" bindtap="changeHouseholdCover">{{coverActionText}}</button>
+    <view class="brand {{householdId ? 'family-brand' : ''}}">
       <view class="brand-mark">{{brandMark}}</view>
       <view class="brand-copy">
         <view class="eyebrow">Private Kitchen Brief</view>
@@ -444,17 +452,19 @@
           <text wx:for="{{calendarWeekdays}}" wx:key="*this" class="calendar-weekday">{{item}}</text>
         </view>
         <view class="calendar-grid">
-          <button
-            wx:for="{{calendarDays}}"
-            wx:key="id"
-            class="calendar-day {{item.enabled ? '' : 'blank'}} {{item.hasRecord ? 'has-record' : ''}} {{item.selected ? 'selected' : ''}} {{item.today ? 'today' : ''}}"
-            disabled="{{!item.enabled}}"
-            data-key="{{item.key}}"
-            bindtap="selectCalendarDate"
-          >
-            <text>{{item.label}}</text>
-            <view wx:if="{{item.hasRecord}}" class="calendar-record-dot"></view>
-          </button>
+          <view wx:for="{{calendarWeeks}}" wx:key="id" wx:for-item="week" class="calendar-week">
+            <view
+              wx:for="{{week.days}}"
+              wx:key="id"
+              wx:for-item="day"
+              class="calendar-day {{day.enabled ? '' : 'blank'}} {{day.hasRecord ? 'has-record' : ''}} {{day.selected ? 'selected' : ''}} {{day.today ? 'today' : ''}}"
+              data-key="{{day.key}}"
+              bindtap="selectCalendarDate"
+            >
+              <text>{{day.label}}</text>
+              <view wx:if="{{day.hasRecord}}" class="calendar-record-dot"></view>
+            </view>
+          </view>
         </view>
         <view class="calendar-legend"><text class="calendar-legend-dot"></text>有记录</view>
       </view>

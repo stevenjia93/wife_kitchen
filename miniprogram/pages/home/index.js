@@ -4,6 +4,7 @@ const SHARE_TASK_POLL_INTERVAL_MS = 5000;
 const SHARE_TASK_MAX_WAIT_MS = 5 * 60 * 1000;
 const MAX_RECIPE_STEPS = 32;
 const MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS = 3;
+const MAX_HOUSEHOLD_COVER_BYTES = 850 * 1024;
 const mealShortLabels = { breakfast: "早", lunch: "午", dinner: "晚" };
 
 const {
@@ -69,7 +70,7 @@ Page({
     calendarMonthKey: "",
     calendarTitle: "",
     calendarWeekdays: ["日", "一", "二", "三", "四", "五", "六"],
-    calendarDays: [],
+    calendarWeeks: [],
     mealSettingsOpen: false,
     menuOpen: false,
     recipeInput: "",
@@ -252,6 +253,9 @@ Page({
       brandMark: activeTab === "husband" ? "厨" : activeTab === "menu" ? "菜" : "点",
       navTitle: activeTab === "husband" ? "老公厨房" : activeTab === "menu" ? "管理菜单" : "老婆点菜",
       navSubtitle: this.data.householdId ? this.data.status : this.data.authLoading ? "正在验证微信身份" : "创建家庭或接受邀请后开始点菜",
+      householdCover: this.state.householdCover || "",
+      hasHouseholdCover: Boolean(this.state.householdCover),
+      coverActionText: this.state.householdCover ? "换封面" : "加封面",
       showWife: activeTab === "wife",
       showHusband: activeTab === "husband",
       showMenu: activeTab === "menu",
@@ -825,7 +829,9 @@ Page({
     return {
       calendarMonthKey: monthKey,
       calendarTitle: `${year}年${month}月`,
-      calendarDays: calendarDaysForMonth(monthKey, this.state.plans, this.data.dateKey, todayKey())
+      calendarWeeks: chunkCalendarWeeks(
+        calendarDaysForMonth(monthKey, this.state.plans, this.data.dateKey, todayKey())
+      )
     };
   },
 
@@ -839,6 +845,37 @@ Page({
 
   closeMealSettings() {
     this.setData({ mealSettingsOpen: false });
+  },
+
+  async changeHouseholdCover() {
+    if (!this.data.householdId) return;
+    try {
+      await requirePrivacyAuthorization();
+    } catch (error) {
+      showToast(error.message);
+      return;
+    }
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ["image"],
+      sourceType: ["album", "camera"],
+      sizeType: ["compressed"],
+      success: async (result) => {
+        const filePath = result.tempFiles && result.tempFiles[0] && result.tempFiles[0].tempFilePath;
+        if (!filePath) return;
+        try {
+          wx.showLoading({ title: "更新封面" });
+          const cover = await this.coverFileToDataUrl(filePath);
+          this.state.householdCover = cover;
+          this.persistState();
+          wx.hideLoading();
+          showToast("家庭封面已更新", "success");
+        } catch (error) {
+          wx.hideLoading();
+          showToast(error.message || "封面更新失败");
+        }
+      }
+    });
   },
 
   togglePreferredMeal(event) {
@@ -1437,6 +1474,31 @@ Page({
     });
   },
 
+  coverFileToDataUrl(filePath) {
+    return new Promise((resolve, reject) => {
+      const readCover = (targetPath) => {
+        try {
+          const base64 = wx.getFileSystemManager().readFileSync(targetPath || filePath, "base64");
+          if (!base64) throw new Error("封面读取失败");
+          if (Math.ceil(base64.length * 0.75) > MAX_HOUSEHOLD_COVER_BYTES) {
+            throw new Error("封面图片太大，请换一张更简洁的照片");
+          }
+          resolve(`data:image/jpeg;base64,${base64}`);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      wx.compressImage({
+        src: filePath,
+        quality: 64,
+        compressedWidth: 1200,
+        compressedHeight: 720,
+        success: (compressed) => readCover(compressed.tempFilePath || filePath),
+        fail: () => readCover(filePath)
+      });
+    });
+  },
+
   localImageFileToDataUrl(filePath) {
     return new Promise((resolve, reject) => {
       try {
@@ -1697,6 +1759,7 @@ function categoryClass(category) {
 
 function compactStateForStorage(state, options = {}) {
   const compacted = normalizeAppState(state);
+  if (options.stripAllImages) compacted.householdCover = "";
   compacted.dishes = (compacted.dishes || []).map((dish) => compactDishForStorage(dish, options)).filter(Boolean);
   Object.keys(compacted.plans || {}).forEach((dateKey) => {
     const plan = compacted.plans[dateKey];
@@ -1704,6 +1767,14 @@ function compactStateForStorage(state, options = {}) {
     plan.wishes = (plan.wishes || []).map((wish) => compactWishForStorage(wish, options)).filter(Boolean);
   });
   return compacted;
+}
+
+function chunkCalendarWeeks(days) {
+  const calendarDays = Array.isArray(days) ? days : [];
+  return Array.from({ length: 6 }, (_, index) => ({
+    id: `calendar-week-${index}`,
+    days: calendarDays.slice(index * 7, index * 7 + 7)
+  }));
 }
 
 function compactDishForStorage(dish, options = {}) {

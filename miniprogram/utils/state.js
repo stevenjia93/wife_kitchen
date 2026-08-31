@@ -1,5 +1,6 @@
 const STORAGE_KEY = "wife-kitchen-mini-state-v1";
 const HOUSEHOLD_KEY = "wife-kitchen-mini-household-v1";
+const MAX_HOUSEHOLD_COVER_CHARS = 1_200_000;
 
 const mealOrder = ["breakfast", "lunch", "dinner"];
 const mealLabels = {
@@ -221,6 +222,7 @@ function emptyPlan() {
 
 function createDefaultState() {
   return {
+    householdCover: "",
     dishes: starterDishes.map((dish) => ({
       ...dish,
       ingredients: dish.ingredients.map((ingredient) => ({ ...ingredient })),
@@ -241,6 +243,7 @@ function normalizeAppState(value) {
   const normalized = {
     ...base,
     ...(value || {}),
+    householdCover: normalizeHouseholdCover(value && value.householdCover),
     dishes: Array.isArray(value && value.dishes) ? value.dishes.map(normalizeDish).filter(Boolean) : base.dishes,
     feedback: value && typeof value.feedback === "object" ? value.feedback : {},
     checkedItems: value && typeof value.checkedItems === "object" ? value.checkedItems : {},
@@ -256,6 +259,14 @@ function normalizeAppState(value) {
     normalized.plans[key] = normalizePlan(normalized.plans[key]);
   });
   return normalized;
+}
+
+function normalizeHouseholdCover(value) {
+  const cover = String(value || "").trim();
+  if (!cover || cover.length > MAX_HOUSEHOLD_COVER_CHARS) return "";
+  if (/^data:image\/(?:jpeg|jpg|png|webp);base64,/i.test(cover)) return cover;
+  if (/^https:\/\//i.test(cover) && cover.length <= 2048) return cover;
+  return "";
 }
 
 function normalizeDish(dish) {
@@ -676,6 +687,7 @@ module.exports = {
   emptyPlan,
   createDefaultState,
   normalizeAppState,
+  normalizeHouseholdCover,
   normalizeMealKeys,
   normalizePlan,
   normalizeMealPhoto,
