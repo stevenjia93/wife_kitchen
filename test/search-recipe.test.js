@@ -151,3 +151,45 @@ test("normalizes image URLs returned by Qwen mixed text-image search", () => {
     { text: "合炒一分钟。", image: "", imageUrl: "" }
   ]);
 });
+
+test("treats decorated versions of an already seen dish as the same dish", () => {
+  assert.equal(_internals.isExcludedDishName("家常蒜蓉菜心", ["蒜蓉菜心"]), true);
+  assert.equal(_internals.isExcludedDishName("白灼芥蓝", ["蒜蓉菜心"]), false);
+});
+
+test("falls back to a genuinely different related dish", () => {
+  const result = _internals.fallbackAlternativeDishName("蒜蓉菜心", [
+    "蒜蓉菜心",
+    "蚝油生菜",
+    "手撕包菜",
+    "清炒西兰花",
+    "蒜蓉油麦菜"
+  ]);
+
+  assert.equal(result, "白灼芥蓝");
+});
+
+test("asks Qwen for a different dish instead of another recipe for the same dish", async () => {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.DASHSCOPE_API_KEY;
+  process.env.DASHSCOPE_API_KEY = "test-key";
+  global.fetch = async (url, options) => {
+    assert.equal(url, "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
+    const body = JSON.parse(options.body);
+    assert.match(body.messages[1].content, /蒜蓉菜心/);
+    assert.match(body.messages[1].content, /不能|不同/);
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "{\"name\":\"白灼芥蓝\"}" } }] })
+    };
+  };
+
+  try {
+    const result = await _internals.chooseAlternativeDishName("蒜蓉菜心", ["家常蒜蓉菜心"]);
+    assert.equal(result, "白灼芥蓝");
+  } finally {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.DASHSCOPE_API_KEY;
+    else process.env.DASHSCOPE_API_KEY = originalKey;
+  }
+});

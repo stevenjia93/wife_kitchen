@@ -32,6 +32,7 @@ const {
   elapsedMeals,
   actionableUnresolvedMeals,
   applyPreferredMealSkips,
+  calendarDaysForMonth,
   canViewOrder,
   canUploadMealPhotos,
   aggregateShoppingList,
@@ -64,6 +65,11 @@ Page({
     menuMealFilter: "all",
     wishName: "",
     featuredIndex: 0,
+    calendarOpen: false,
+    calendarMonthKey: "",
+    calendarTitle: "",
+    calendarWeekdays: ["日", "一", "二", "三", "四", "五", "六"],
+    calendarDays: [],
     mealSettingsOpen: false,
     menuOpen: false,
     recipeInput: "",
@@ -770,7 +776,7 @@ Page({
     const tab = event.currentTarget.dataset.tab || "wife";
     const role = tab === "husband" ? "husband" : tab === "wife" ? "wife" : this.data.role;
     this.setData(
-      { activeTab: tab, role, mealSettingsOpen: false, menuOpen: false, detailOpen: false },
+      { activeTab: tab, role, calendarOpen: false, mealSettingsOpen: false, menuOpen: false, detailOpen: false },
       () => this.refreshView()
     );
   },
@@ -784,6 +790,43 @@ Page({
 
   goToday() {
     this.setData({ dateKey: todayKey(), featuredIndex: 0, menuOpen: false }, () => this.refreshView());
+  },
+
+  openCalendar() {
+    const monthKey = this.data.dateKey.slice(0, 7);
+    this.setData({ calendarOpen: true, ...this.calendarViewData(monthKey) });
+  },
+
+  closeCalendar() {
+    this.setData({ calendarOpen: false });
+  },
+
+  shiftCalendarMonth(event) {
+    const months = Number(event.currentTarget.dataset.months || 0);
+    const date = dateFromKey(`${this.data.calendarMonthKey || this.data.dateKey.slice(0, 7)}-01`);
+    date.setMonth(date.getMonth() + months);
+    this.setData(this.calendarViewData(dateKeyFromDate(date).slice(0, 7)));
+  },
+
+  selectCalendarDate(event) {
+    const dateKey = String(event.currentTarget.dataset.key || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
+    this.setData({
+      dateKey,
+      calendarOpen: false,
+      featuredIndex: 0,
+      menuOpen: false,
+      detailOpen: false
+    }, () => this.refreshView());
+  },
+
+  calendarViewData(monthKey) {
+    const [year, month] = monthKey.split("-").map(Number);
+    return {
+      calendarMonthKey: monthKey,
+      calendarTitle: `${year}年${month}月`,
+      calendarDays: calendarDaysForMonth(monthKey, this.state.plans, this.data.dateKey, todayKey())
+    };
   },
 
   selectMeal(event) {
@@ -1124,6 +1167,7 @@ Page({
       createdAt: new Date().toISOString(),
       searchStartedAt: new Date().toISOString(),
       recipe: null,
+      seenRecipeNames: [],
       error: ""
     };
     plan.wishes = [
@@ -1137,7 +1181,7 @@ Page({
     this.searchWishRecipe(dateKey, wish.id);
   },
 
-  async searchWishRecipe(dateKey, wishId) {
+  async searchWishRecipe(dateKey, wishId, options = {}) {
     const current = this.findWishLocation(wishId, dateKey);
     if (!current) return;
     current.wish.status = "searching";
@@ -1147,6 +1191,8 @@ Page({
     try {
       const payload = await requestApi("/api/search-recipe", {
         query: current.wish.name,
+        alternative: options.alternative === true,
+        excludeNames: current.wish.seenRecipeNames || [],
         includeImages: false,
         includeStepImages: false
       });
@@ -1154,6 +1200,10 @@ Page({
       if (!latest) return;
       latest.wish.status = "found";
       latest.wish.recipe = payload.recipe || null;
+      latest.wish.seenRecipeNames = rememberRecipeName(
+        latest.wish.seenRecipeNames,
+        latest.wish.recipe?.name
+      );
       latest.wish.error = "";
       latest.wish.searchStartedAt = "";
       this.persistState();
@@ -1183,8 +1233,12 @@ Page({
     const wishId = event.currentTarget.dataset.id;
     const found = this.findWishLocation(wishId);
     if (!found) return;
+    found.wish.seenRecipeNames = rememberRecipeName(
+      found.wish.seenRecipeNames,
+      found.wish.recipe?.name || found.wish.name
+    );
     found.wish.recipe = null;
-    this.searchWishRecipe(found.dateKey, wishId);
+    this.searchWishRecipe(found.dateKey, wishId, { alternative: true });
   },
 
   declineWish(event) {
@@ -1623,6 +1677,13 @@ function buildDateMeta(dateKey, plan, pending, elapsed) {
   if (elapsed.length) parts.push(`${elapsed.length} 餐已过`);
   parts.push(pending.length ? `${pending.length} 餐待定` : "当前无需再决定");
   return parts.join(" · ");
+}
+
+function rememberRecipeName(value, name) {
+  const names = Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const nextName = String(name || "").trim();
+  if (nextName) names.push(nextName);
+  return Array.from(new Set(names)).slice(-16);
 }
 
 function categoryClass(category) {

@@ -331,6 +331,11 @@ function normalizeWish(wish) {
     createdAt,
     searchStartedAt: searchIsStale ? "" : searchStartedAt,
     recipe: wish.recipe && typeof wish.recipe === "object" ? wish.recipe : null,
+    seenRecipeNames: Array.from(new Set(
+      (Array.isArray(wish.seenRecipeNames) ? wish.seenRecipeNames : [])
+        .map((name) => String(name || "").trim())
+        .filter(Boolean)
+    )).slice(-16),
     error: searchIsStale
       ? "找菜超时了，可以重新搜索。"
       : String(wish.error || "").trim()
@@ -458,6 +463,41 @@ function applyPreferredMealSkips(plan, preferredMeals) {
 
 function hasPlanActivity(plan) {
   return selectedDishCount(plan) > 0 || wishCount(plan) > 0 || mealOrder.some((meal) => plan.skipped[meal]);
+}
+
+function hasPlanRecord(plan) {
+  if (!plan || typeof plan !== "object") return false;
+  const normalized = normalizePlan(plan);
+  return selectedDishCount(normalized) > 0 || wishCount(normalized) > 0 || normalized.afterPhotos.length > 0;
+}
+
+function calendarDaysForMonth(monthKey, plans = {}, selectedKey = "", currentKey = todayKey()) {
+  const fallbackMonthKey = /^\d{4}-\d{2}$/.test(String(selectedKey).slice(0, 7))
+    ? String(selectedKey).slice(0, 7)
+    : String(currentKey).slice(0, 7);
+  const normalizedMonthKey = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(monthKey))
+    ? String(monthKey)
+    : fallbackMonthKey;
+  const [year, month] = normalizedMonthKey.split("-").map(Number);
+  const firstWeekday = new Date(year, month - 1, 1).getDay();
+  const dayCount = new Date(year, month, 0).getDate();
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const day = index - firstWeekday + 1;
+    if (day < 1 || day > dayCount) {
+      return { id: `${normalizedMonthKey}-blank-${index}`, key: "", label: "", enabled: false };
+    }
+    const key = `${normalizedMonthKey}-${String(day).padStart(2, "0")}`;
+    return {
+      id: key,
+      key,
+      label: String(day),
+      enabled: true,
+      hasRecord: hasPlanRecord(plans[key]),
+      selected: key === selectedKey,
+      today: key === currentKey
+    };
+  });
 }
 
 function canViewOrder(plan, key) {
@@ -654,6 +694,8 @@ module.exports = {
   actionableUnresolvedMeals,
   applyPreferredMealSkips,
   hasPlanActivity,
+  hasPlanRecord,
+  calendarDaysForMonth,
   canViewOrder,
   canUploadMealPhotos,
   planFoodTargets,

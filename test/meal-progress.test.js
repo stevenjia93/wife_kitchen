@@ -7,7 +7,9 @@ const {
   normalizePlan,
   elapsedMeals,
   actionableUnresolvedMeals,
-  applyPreferredMealSkips
+  applyPreferredMealSkips,
+  hasPlanRecord,
+  calendarDaysForMonth
 } = require("../miniprogram/utils/state");
 
 test("treats elapsed unresolved meals as non-blocking for today's order", () => {
@@ -70,4 +72,25 @@ test("auto-skips unused non-preferred meals without deleting an existing arrange
   assert.equal(plan.reopened.breakfast, false);
   assert.equal(plan.skipped.lunch, false);
   assert.deepEqual(plan.lunch, ["tomato-eggs"]);
+});
+
+test("marks only dates with dishes, wishes or meal photos as calendar records", () => {
+  assert.equal(hasPlanRecord(normalizePlan({ dinner: ["tomato-eggs"] })), true);
+  assert.equal(hasPlanRecord(normalizePlan({ wishes: [{ id: "wish", name: "鱼香肉丝", meal: "dinner" }] })), true);
+  assert.equal(hasPlanRecord(normalizePlan({ afterPhotos: [{ id: "photo", imageOmitted: true }] })), true);
+  assert.equal(hasPlanRecord(normalizePlan({ skipped: { breakfast: true } })), false);
+});
+
+test("builds a stable six-week calendar and highlights recorded dates", () => {
+  const days = calendarDaysForMonth("2026-07", {
+    "2026-07-31": normalizePlan({ dinner: ["tomato-eggs"] }),
+    "2026-07-12": normalizePlan({ skipped: { dinner: true } })
+  }, "2026-07-31", "2026-08-31");
+  const july31 = days.find((day) => day.key === "2026-07-31");
+  const july12 = days.find((day) => day.key === "2026-07-12");
+
+  assert.equal(days.length, 42);
+  assert.equal(july31.hasRecord, true);
+  assert.equal(july31.selected, true);
+  assert.equal(july12.hasRecord, false);
 });

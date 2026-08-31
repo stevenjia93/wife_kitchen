@@ -62,3 +62,23 @@ test("marks stale automatic recipe searches as failed", () => {
   assert.equal(wish.status, "failed");
   assert.match(wish.error, /超时/);
 });
+
+test("preserves recently seen recipe names so retry can avoid repeats", () => {
+  const state = normalizeAppState({
+    dishes: [],
+    plans: {
+      "2026-08-31": {
+        wishes: [{
+          id: "wish-3",
+          meal: "dinner",
+          name: "蒜蓉菜心",
+          status: "found",
+          seenRecipeNames: ["蒜蓉菜心", "白灼芥蓝", "蒜蓉菜心"],
+          recipe: { name: "白灼芥蓝" }
+        }]
+      }
+    }
+  });
+
+  assert.deepEqual(state.plans["2026-08-31"].wishes[0].seenRecipeNames, ["蒜蓉菜心", "白灼芥蓝"]);
+});

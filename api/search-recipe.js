@@ -27,7 +27,12 @@ async function handler(req, res) {
 
   try {
     const body = await readJsonBody(req);
-    const query = normalizeQuery(body.query);
+    const originalQuery = normalizeQuery(body.query);
+    const alternative = body.alternative === true;
+    const excludedNames = normalizeExcludedDishNames(body.excludeNames);
+    const query = alternative
+      ? await chooseAlternativeDishName(originalQuery, excludedNames)
+      : originalQuery;
     const searchUrl = `https://www.xiachufang.com/search/?keyword=${encodeURIComponent(query)}`;
     const response = await fetch(searchUrl, {
       headers: {
@@ -42,7 +47,9 @@ async function handler(req, res) {
 
     const html = (await response.text()).slice(0, MAX_SEARCH_HTML_CHARS);
     assertSearchPageReadable(html);
-    const candidates = extractSearchCandidates(html, searchUrl, query);
+    const candidates = extractSearchCandidates(html, searchUrl, query).filter(
+      (candidate) => !alternative || !isExcludedDishName(candidate.title, [originalQuery, ...excludedNames])
+    );
     if (!candidates.length) throw httpError("没找到合适的下厨房菜谱", 404);
 
     const matchedRecipe = await importBestRecipe(candidates, query, {
@@ -51,14 +58,108 @@ async function handler(req, res) {
     });
     if (!matchedRecipe) throw httpError("找到了候选菜谱，但详情暂时无法读取", 502);
     const recipe = await ensureInAppRecipeGuide(matchedRecipe, query);
+    if (alternative && isExcludedDishName(recipe.name, [originalQuery, ...excludedNames])) {
+      throw httpError("这次没找到不同的新菜，请再换一次", 409);
+    }
 
-    res.status(200).json({ recipe, candidates: candidates.slice(0, 3) });
+    res.status(200).json({ recipe, candidates: candidates.slice(0, 3), searchQuery: query });
   } catch (error) {
     const timedOut = error.name === "AbortError" || /timeout|aborted/i.test(error.message || "");
     res.status(error.statusCode || (timedOut ? 504 : 400)).json({
       error: timedOut ? "找菜超时了，请点重新找或直接挑战" : error.message || "搜索失败"
     });
   }
+}
+
+async function chooseAlternativeDishName(query, excludedNames = []) {
+  const exclusions = normalizeExcludedDishNames([query, ...excludedNames]);
+  try {
+    const generated = await generateAlternativeDishName(query, exclusions);
+    if (generated && !isExcludedDishName(generated, exclusions)) return generated;
+  } catch (error) {
+    console.warn("Alternative dish generation fell back to local suggestions:", error.message || error);
+  }
+  return fallbackAlternativeDishName(query, exclusions);
+}
+
+async function generateAlternativeDishName(query, excludedNames) {
+  const apiKey = String(process.env.DASHSCOPE_API_KEY || "").trim();
+  if (!apiKey) throw new Error("DASHSCOPE_API_KEY missing");
+  const baseUrl = String(process.env.DASHSCOPE_BASE_URL || DEFAULT_DASHSCOPE_BASE_URL).trim().replace(/\/+$/, "");
+  const response = await fetch(`${baseUrl}/compatible-mode/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json"
+    },
+    signal: timeoutSignal(12_000),
+    body: JSON.stringify({
+      model: process.env.DASHSCOPE_RECIPE_MODEL || DEFAULT_RECIPE_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: "你是家庭点菜助手。用户点重新找时，必须换成真正不同的一道家常菜，不能只改菜谱标题或做法。"
+        },
+        {
+          role: "user",
+          content: [
+            `原来想吃：${query}`,
+            `已经看过且不要再推荐：${excludedNames.join("、")}`,
+            "推荐一道口味、主料或餐次相近，但菜名和成品明显不同的家常菜。",
+            "返回严格 JSON：{\"name\":\"新菜名\"}，菜名控制在 2-12 个汉字，只输出 JSON。"
+          ].join("\n")
+        }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.9,
+      max_completion_tokens: 120
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error?.message || payload.message || "换菜失败");
+  const content = payload.choices?.[0]?.message?.content;
+  const responseText = Array.isArray(content) ? content.map((item) => item.text || "").join("") : content;
+  return normalizeQuery(parseJsonText(responseText).name).slice(0, 20);
+}
+
+function fallbackAlternativeDishName(query, excludedNames = []) {
+  const related = alternativeDishPool(query);
+  const available = related.filter((name) => !isExcludedDishName(name, excludedNames));
+  if (!available.length) throw httpError("这个方向已经换过一轮了，试试输入新的食材或口味", 409);
+  return available[Math.floor(Math.random() * available.length)];
+}
+
+function alternativeDishPool(query) {
+  const pools = [
+    [/菜心|青菜|蔬菜|生菜|油麦菜|西兰花|菠菜|白菜/, ["蚝油生菜", "手撕包菜", "白灼芥蓝", "清炒西兰花", "蒜蓉油麦菜"]],
+    [/鸡|鸡丁|鸡腿|鸡翅/, ["香菇滑鸡", "黄焖鸡", "可乐鸡翅", "辣子鸡丁", "葱油鸡"]],
+    [/排骨/, ["糖醋排骨", "莲藕排骨汤", "蒜香排骨", "冬瓜排骨汤", "红烧排骨"]],
+    [/蛋|鸡蛋/, ["虾仁滑蛋", "青椒炒蛋", "肉末蒸蛋", "番茄炒蛋", "家常蒸水蛋"]],
+    [/豆腐/, ["家常豆腐", "麻婆豆腐", "肉末豆腐", "鲫鱼豆腐汤", "香煎豆腐"]],
+    [/鱼|虾|海鲜/, ["清蒸鲈鱼", "油焖大虾", "蒜蓉粉丝虾", "番茄鱼片", "葱姜炒蟹"]],
+    [/汤|粥/, ["冬瓜丸子汤", "菌菇鸡汤", "番茄牛腩汤", "山药排骨汤", "皮蛋瘦肉粥"]]
+  ];
+  const match = pools.find(([pattern]) => pattern.test(query));
+  return match?.[1] || ["鱼香肉丝", "地三鲜", "青椒肉丝", "香菇滑鸡", "番茄牛腩", "干锅花菜"];
+}
+
+function normalizeExcludedDishNames(value) {
+  return Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+      .map((name) => cleanText(name).slice(0, 40))
+      .filter(Boolean)
+  )).slice(-16);
+}
+
+function isExcludedDishName(name, excludedNames = []) {
+  const target = compactText(name);
+  if (!target) return true;
+  return normalizeExcludedDishNames(excludedNames).some((excluded) => {
+    const value = compactText(excluded);
+    if (!value) return false;
+    if (value === target) return true;
+    return Math.min(value.length, target.length) >= 3 && (value.includes(target) || target.includes(value));
+  });
 }
 
 async function importBestRecipe(candidates, query, options = {}) {
@@ -485,6 +586,10 @@ module.exports._internals = {
   mergeGuideStepDetails,
   normalizeGeneratedStepDetails,
   extractImageUrls,
+  chooseAlternativeDishName,
+  fallbackAlternativeDishName,
+  normalizeExcludedDishNames,
+  isExcludedDishName,
   scoreSearchCandidate,
   scoreRecipeCompleteness,
   compareImportedRecipes

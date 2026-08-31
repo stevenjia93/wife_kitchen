@@ -57,10 +57,16 @@
 
   <block wx:else>
     <view class="date-card panel">
-      <view class="date-copy">
-        <view class="eyebrow">{{showHusband ? 'Kitchen Brief' : showMenu ? 'Menu Library' : 'Pick Session'}}</view>
-        <view class="date-title">{{dateTitle}}</view>
-        <view class="subtitle">{{dateMeta}}</view>
+      <view class="date-card-head">
+        <view class="date-copy">
+          <view class="eyebrow">{{showHusband ? 'Kitchen Brief' : showMenu ? 'Menu Library' : 'Pick Session'}}</view>
+          <view class="date-title">{{dateTitle}}</view>
+          <view class="subtitle">{{dateMeta}}</view>
+        </view>
+        <button class="calendar-trigger" aria-label="打开日历" bindtap="openCalendar">
+          <text class="calendar-trigger-icon">▦</text>
+          <text>日历</text>
+        </button>
       </view>
       <view class="date-actions">
         <button class="date-btn" data-days="-1" bindtap="shiftDate">‹</button>
@@ -417,6 +423,40 @@
         </view>
         <view class="meal-settings-hint">未勾选的空餐次，会在确认下单时自动跳过。</view>
         <button class="button dark meal-settings-done" bindtap="closeMealSettings">完成</button>
+      </view>
+    </view>
+
+    <view wx:if="{{calendarOpen}}" class="settings-mask calendar-mask" bindtap="closeCalendar">
+      <view class="calendar-card" catchtap="noop">
+        <view class="calendar-head">
+          <view>
+            <view class="section-title">回看点菜记录</view>
+            <view class="subtitle">绿色日期有点菜或用餐照片</view>
+          </view>
+          <button class="sheet-close" bindtap="closeCalendar">×</button>
+        </view>
+        <view class="calendar-month-row">
+          <button class="calendar-month-btn" data-months="-1" bindtap="shiftCalendarMonth">‹</button>
+          <view class="calendar-month-title">{{calendarTitle}}</view>
+          <button class="calendar-month-btn" data-months="1" bindtap="shiftCalendarMonth">›</button>
+        </view>
+        <view class="calendar-week-row">
+          <text wx:for="{{calendarWeekdays}}" wx:key="*this" class="calendar-weekday">{{item}}</text>
+        </view>
+        <view class="calendar-grid">
+          <button
+            wx:for="{{calendarDays}}"
+            wx:key="id"
+            class="calendar-day {{item.enabled ? '' : 'blank'}} {{item.hasRecord ? 'has-record' : ''}} {{item.selected ? 'selected' : ''}} {{item.today ? 'today' : ''}}"
+            disabled="{{!item.enabled}}"
+            data-key="{{item.key}}"
+            bindtap="selectCalendarDate"
+          >
+            <text>{{item.label}}</text>
+            <view wx:if="{{item.hasRecord}}" class="calendar-record-dot"></view>
+          </button>
+        </view>
+        <view class="calendar-legend"><text class="calendar-legend-dot"></text>有记录</view>
       </view>
     </view>
 
