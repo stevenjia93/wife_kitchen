@@ -97,6 +97,129 @@ test("已有识别结果生成分享图时不重复消耗照片识别额度", as
   assert.equal(response.body.usage, null);
 });
 
+test("照片识别结果和原图按家庭日期保存", async () => {
+  const householdId = "33333333-3333-4333-8333-333333333333";
+  let stored;
+  const database = {
+    findHouseholdMembership: async () => ({ role: "member" }),
+    consumeHouseholdPhotoAnalysis: async () => ({ used: 1, remaining: 2, limit: 3 }),
+    upsertHouseholdMealPhoto: async (value) => {
+      stored = value;
+      return { photo_id: value.photoId };
+    }
+  };
+  const handler = createHandler(database, { requireUser: async () => ({ id: "user-3" }) }, {
+    standardizeImage: async (image) => image,
+    analyzeMealPhoto: async () => ({
+      totalCalories: 320,
+      confidence: "medium",
+      items: [{ label: "番茄炒蛋", calories: 320, bbox: { x: 0.1, y: 0.1, width: 0.6, height: 0.5 } }]
+    })
+  });
+  const response = responseRecorder();
+
+  await handler({
+    method: "POST",
+    body: {
+      householdId,
+      dateKey: "2026-08-31",
+      photoId: "photo-12345678",
+      image: "data:image/jpeg;base64,AA=="
+    }
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(stored.householdId, householdId);
+  assert.equal(stored.dateKey, "2026-08-31");
+  assert.equal(stored.photoId, "photo-12345678");
+  assert.equal(stored.originalMime, "image/jpeg");
+  assert.equal(Buffer.isBuffer(stored.originalImage), true);
+  assert.equal(stored.analysis.totalCalories, 320);
+});
+
+test("已登录家庭成员可恢复当天原图、识别结果和分享图", async () => {
+  const householdId = "44444444-4444-4444-8444-444444444444";
+  const database = {
+    findHouseholdMembership: async () => ({ role: "owner" }),
+    loadHouseholdMealPhoto: async () => ({
+      photo_id: "photo-87654321",
+      original_image: Buffer.from("original"),
+      original_mime: "image/jpeg",
+      analysis: { totalCalories: 500, confidence: "medium", items: [] },
+      share_task_id: "task-87654321",
+      share_status: "SUCCEEDED",
+      share_image: Buffer.from("share"),
+      share_mime: "image/jpeg",
+      share_created_at: new Date("2026-08-31T04:00:00.000Z")
+    })
+  };
+  const handler = createHandler(database, { requireUser: async () => ({ id: "user-4" }) });
+  const response = responseRecorder();
+
+  await handler({
+    method: "POST",
+    body: {
+      action: "load",
+      householdId,
+      dateKey: "2026-08-31",
+      photoId: "photo-87654321"
+    }
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.body.image, /^data:image\/jpeg;base64,/);
+  assert.match(response.body.shareImage, /^data:image\/jpeg;base64,/);
+  assert.equal(response.body.shareStatus, "SUCCEEDED");
+  assert.equal(response.body.remoteStored, true);
+});
+
+test("分享图任务编号和完成图片会写回当天照片记录", async () => {
+  const householdId = "55555555-5555-4555-8555-555555555555";
+  let savedShare;
+  const analysis = {
+    totalCalories: 260,
+    confidence: "medium",
+    items: [{ label: "玉米排骨汤", calories: 260, bbox: { x: 0.2, y: 0.2, width: 0.5, height: 0.5 } }]
+  };
+  const database = {
+    findHouseholdMembership: async () => ({ role: "member" }),
+    loadHouseholdMealPhoto: async () => ({
+      photo_id: "photo-abcdefgh",
+      original_image: Buffer.from("original"),
+      original_mime: "image/jpeg",
+      analysis
+    }),
+    saveHouseholdMealPhotoShare: async (value) => {
+      savedShare = value;
+    }
+  };
+  const handler = createHandler(database, { requireUser: async () => ({ id: "user-5" }) }, {
+    getMealShareImageTask: async () => ({
+      taskId: "task-abcdefgh",
+      status: "SUCCEEDED",
+      shareImage: "data:image/jpeg;base64,c2hhcmU="
+    })
+  });
+  const response = responseRecorder();
+
+  await handler({
+    method: "POST",
+    body: {
+      householdId,
+      dateKey: "2026-08-31",
+      photoId: "photo-abcdefgh",
+      includeShareImage: true,
+      shareTaskId: "task-abcdefgh",
+      analysis
+    }
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(savedShare.status, "SUCCEEDED");
+  assert.equal(savedShare.shareMime, "image/jpeg");
+  assert.equal(savedShare.shareImage.toString(), "share");
+});
+
 test("每日额度按上海自然日计算", () => {
   assert.equal(usageDateShanghai(new Date("2026-08-30T15:59:59.000Z")), "2026-08-30");
   assert.equal(usageDateShanghai(new Date("2026-08-30T16:00:00.000Z")), "2026-08-31");
@@ -196,7 +319,8 @@ test("分享图使用百炼异步任务接口创建", async () => {
     const result = await startMealShareImageTask("data:image/jpeg;base64,AA==", analysis);
     assert.equal(generationRequest.url, "https://example.maas.aliyuncs.com/api/v1/services/aigc/image-generation/generation");
     assert.equal(generationRequest.options.headers["x-dashscope-async"], "enable");
-    assert.equal(generationRequest.body.model, "qwen-image-3.0-pro");
+    assert.equal(generationRequest.body.model, "qwen-image-3.0");
+    assert.equal(generationRequest.body.parameters.enable_thinking, false);
     assert.equal(generationRequest.body.input.messages[0].content[0].image, "data:image/jpeg;base64,AA==");
     assert.equal(generationRequest.body.parameters.size, "1024*1280");
     assert.equal(result.status, "PENDING");

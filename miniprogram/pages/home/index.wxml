@@ -362,7 +362,7 @@
         <view wx:if="{{item.displayImage}}" class="meal-photo-frame">
           <image class="meal-photo-image {{item.isSharePreview ? 'contain' : ''}}" src="{{item.displayImage}}" mode="widthFix"></image>
         </view>
-        <view wx:else class="meal-photo photo-placeholder">原图未保存</view>
+        <view wx:else class="meal-photo photo-placeholder">{{item.missingPhotoText}}</view>
         <view class="photo-meta">
           <view>
             <view class="order-name">{{item.targetLabel}}</view>

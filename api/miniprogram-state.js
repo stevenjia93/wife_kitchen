@@ -125,8 +125,8 @@ function stripPhotoImages(photo) {
     imageOmitted: hadImage,
     shareImage: "",
     shareOmitted: hadShareImage,
-    shareStatus: photo.shareStatus === "done" ? "idle" : photo.shareStatus,
-    shareCreatedAt: photo.shareStatus === "done" ? null : photo.shareCreatedAt
+    shareStatus: photo.shareStatus,
+    shareCreatedAt: photo.shareCreatedAt || null
   };
 }
 

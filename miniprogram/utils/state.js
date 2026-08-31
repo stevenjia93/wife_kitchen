@@ -375,8 +375,12 @@ function normalizeMealPhoto(photo) {
     shareOmitted,
     shareStatus: photo.shareStatus || (shareImage ? "done" : "idle"),
     shareError: String(photo.shareError || "").trim(),
+    shareTaskId: String(photo.shareTaskId || "").trim(),
+    shareRemoteStatus: String(photo.shareRemoteStatus || "").trim().toUpperCase(),
     shareStartedAt: photo.shareStartedAt || null,
-    shareCreatedAt: photo.shareCreatedAt || null
+    shareCreatedAt: photo.shareCreatedAt || null,
+    remoteStored: Boolean(photo.remoteStored),
+    shareStored: Boolean(photo.shareStored || shareImage || shareOmitted)
   };
 }
 

@@ -10,11 +10,22 @@ test("re-upload replaces the current photo and auto-generates a share image afte
   const template = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxml"), "utf8");
   assert.match(source, /plan\.afterPhotos = \[photo\]/);
   assert.match(source, /this\.analyzeMealPhoto\(photo\.id\)/);
-  assert.match(source, /await this\.generateMealSharePhoto\(photoId, \{ image, analysis: payload\.analysis, quiet: true \}\)/);
+  assert.match(source, /await this\.generateMealSharePhoto\(photoId, \{ image, analysis: payload\.analysis, quiet: true, dateKey \}\)/);
   assert.match(source, /async generateSharePhoto\(event\) \{\s*this\.generateMealSharePhoto/);
   assert.match(template, /整桌照片热量识别/);
   assert.match(template, /\{\{item\.totalCalories\}\}/);
   assert.match(template, /\{\{item\.calories\}\} kcal/);
+});
+
+test("meal photos and cloud generation tasks resume after reopening or changing dates", () => {
+  const source = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.js"), "utf8");
+  const stateSource = fs.readFileSync(path.join(projectRoot, "miniprogram/utils/state.js"), "utf8");
+  assert.match(source, /hydrateMealPhotosForDate\(dateKey/);
+  assert.match(source, /action:\s*"load"/);
+  assert.match(source, /shareTaskId:\s*sharePayload\.shareTaskId/);
+  assert.match(source, /dateKey,\s*photoId,\s*includeShareImage:\s*true/);
+  assert.match(stateSource, /shareTaskId:\s*String\(photo\.shareTaskId/);
+  assert.match(stateSource, /remoteStored:\s*Boolean\(photo\.remoteStored\)/);
 });
 
 test("menu management keeps image, copy and delete action in one row without a source button", () => {

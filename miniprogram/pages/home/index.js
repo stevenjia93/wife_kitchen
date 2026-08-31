@@ -1,7 +1,7 @@
 const stateUtils = require("../../utils/state");
 const { AUTH_KEY, loginWithWechat, requestApi, showToast, requirePrivacyAuthorization } = require("../../utils/api");
 const SHARE_TASK_POLL_INTERVAL_MS = 5000;
-const SHARE_TASK_MAX_WAIT_MS = 5 * 60 * 1000;
+const SHARE_TASK_MAX_WAIT_MS = 12 * 60 * 1000;
 const MAX_RECIPE_STEPS = 32;
 const MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS = 3;
 const MAX_HOUSEHOLD_COVER_BYTES = 850 * 1024;
@@ -93,6 +93,8 @@ Page({
     this.enableShareMenu();
     this.state = this.loadLocalState();
     this.photoImages = {};
+    this.hydratingPhotoKeys = new Set();
+    this.resumingShareTasks = new Set();
     this.recipeRefreshes = new Set();
     this.remoteSaveTimer = null;
     const savedHousehold = wx.getStorageSync(HOUSEHOLD_KEY) || {};
@@ -115,6 +117,7 @@ Page({
 
   onShow() {
     this.enableShareMenu();
+    if (this.data.householdId) this.hydrateMealPhotosForDate(this.data.dateKey);
   },
 
   onPullDownRefresh() {
@@ -561,7 +564,10 @@ Page({
     const analysis = photo.analysis || null;
     const shareStartedAt = Date.parse(photo.shareStartedAt || "");
     const shareElapsedMs = shareStartedAt ? Date.now() - shareStartedAt : 0;
-    const shareStillRunning = photo.shareStatus === "loading" && shareStartedAt && shareElapsedMs < SHARE_TASK_MAX_WAIT_MS;
+    const shareStillRunning =
+      photo.shareStatus === "loading" &&
+      Boolean(photo.shareTaskId) &&
+      (!shareStartedAt || shareElapsedMs < SHARE_TASK_MAX_WAIT_MS);
     const recognizedNames = analysis
       ? Array.from(new Set((analysis.items || []).map((item) => String(item.label || "").trim()).filter(Boolean))).slice(0, 6)
       : [];
@@ -569,15 +575,16 @@ Page({
       ...photo,
       displayImage,
       isSharePreview: Boolean(photo.shareImage),
+      missingPhotoText: photo.remoteStored ? "正在恢复当天照片" : "原图尚未恢复",
       targetLabel: recognizedNames.join("、") || (photo.analysisStatus === "loading" ? "正在识别照片内容" : "整桌照片"),
       timeText: formatTime(photo.createdAt),
       totalCalories: analysis ? Math.round(analysis.totalCalories || 0) : 0,
       confidenceText: analysis ? confidenceText(analysis.confidence) : "",
       analysisItems: analysis ? (analysis.items || []).slice(0, 5) : [],
       canSaveShare: Boolean(photo.shareImage),
-      canGenerateShare: Boolean(analysis && !photo.shareImage && originalImage && !shareStillRunning),
+      canGenerateShare: Boolean(analysis && !photo.shareImage && (originalImage || photo.remoteStored) && !shareStillRunning),
       generateShareText: photo.shareStatus === "failed" ? "重新生成分享图" : "生成分享图",
-      shareEtaText: shareStillRunning ? "预计 1–3 分钟，可先浏览其他页面" : "",
+      shareEtaText: shareStillRunning ? "通常 1–3 分钟，关闭后重新打开也会继续" : "",
       statusText:
         shareStillRunning
           ? "正在美化照片并添加手账标注"
@@ -733,6 +740,7 @@ Page({
         syncing: false
       });
       this.refreshView();
+      this.hydrateMealPhotosForDate(this.data.dateKey);
       if (!payload.payload) await this.saveRemoteState();
       this.prepareHouseholdInvite();
       if (!options.silent) showToast(`已进入${household.name}`, "success");
@@ -789,11 +797,19 @@ Page({
     const days = Number(event.currentTarget.dataset.days || 0);
     const date = dateFromKey(this.data.dateKey);
     date.setDate(date.getDate() + days);
-    this.setData({ dateKey: dateKeyFromDate(date), featuredIndex: 0, menuOpen: false }, () => this.refreshView());
+    const dateKey = dateKeyFromDate(date);
+    this.setData({ dateKey, featuredIndex: 0, menuOpen: false }, () => {
+      this.refreshView();
+      this.hydrateMealPhotosForDate(dateKey);
+    });
   },
 
   goToday() {
-    this.setData({ dateKey: todayKey(), featuredIndex: 0, menuOpen: false }, () => this.refreshView());
+    const dateKey = todayKey();
+    this.setData({ dateKey, featuredIndex: 0, menuOpen: false }, () => {
+      this.refreshView();
+      this.hydrateMealPhotosForDate(dateKey);
+    });
   },
 
   openCalendar() {
@@ -821,7 +837,10 @@ Page({
       featuredIndex: 0,
       menuOpen: false,
       detailOpen: false
-    }, () => this.refreshView());
+    }, () => {
+      this.refreshView();
+      this.hydrateMealPhotosForDate(dateKey);
+    });
   },
 
   calendarViewData(monthKey) {
@@ -1379,12 +1398,16 @@ Page({
           const localImagePath = await this.dataUrlToLocalImageFile(image, photoId).catch(() => "");
           const photo = {
             id: photoId,
+            dateKey: this.data.dateKey,
             image: "",
             localImagePath,
             imageOmitted: true,
             createdAt: new Date().toISOString(),
             analysisStatus: "loading",
-            shareStatus: "idle"
+            shareStatus: "idle",
+            shareTaskId: "",
+            remoteStored: false,
+            shareStored: false
           };
           previousPhotos.forEach((item) => this.discardPhotoAssets(item));
           this.photoImages[photo.id] = image;
@@ -1512,7 +1535,10 @@ Page({
   },
 
   async analyzeMealPhoto(photoId) {
-    const plan = ensurePlan(this.state, this.data.dateKey);
+    const currentPlan = ensurePlan(this.state, this.data.dateKey);
+    const currentPhoto = (currentPlan.afterPhotos || []).find((item) => item.id === photoId);
+    const dateKey = currentPhoto?.dateKey || this.data.dateKey;
+    const plan = ensurePlan(this.state, dateKey);
     const photo = (plan.afterPhotos || []).find((item) => item.id === photoId);
     if (!photo) return;
     const image =
@@ -1524,14 +1550,16 @@ Page({
         analysisStatus: photo.analysis ? "done" : "failed",
         analysisError: "原图没有保存在本地，请重新上传后估算",
         shareStatus: "idle"
-      });
+      }, dateKey);
       showToast("原图没有保存在本地，请重新上传");
       return;
     }
     try {
-      this.patchPhoto(photoId, { analysisStatus: "loading", analysisError: "" });
+      this.patchPhoto(photoId, { analysisStatus: "loading", analysisError: "" }, dateKey);
       const payload = await requestApi("/api/analyze-meal-photo", {
         householdId: this.data.householdId,
+        dateKey,
+        photoId,
         image,
         includeShareImage: false
       });
@@ -1546,11 +1574,12 @@ Page({
         analysisStatus: "done",
         analysisError: "",
         shareStatus: "idle",
-        shareError: ""
-      });
-      await this.generateMealSharePhoto(photoId, { image, analysis: payload.analysis, quiet: true });
+        shareError: "",
+        remoteStored: true
+      }, dateKey);
+      await this.generateMealSharePhoto(photoId, { image, analysis: payload.analysis, quiet: true, dateKey });
     } catch (error) {
-      const latestPlan = ensurePlan(this.state, this.data.dateKey);
+      const latestPlan = ensurePlan(this.state, dateKey);
       if (/照片识别已用完/.test(String(error.message || ""))) {
         this.state.photoAnalysisUsage = { dateKey: todayKey(), count: MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS };
       }
@@ -1559,7 +1588,7 @@ Page({
         analysisStatus: latestPhoto.analysis ? "done" : "failed",
         analysisError: error.message || "热量估算失败",
         shareStatus: "idle"
-      });
+      }, dateKey);
       showToast(error.message || "热量估算失败");
     }
   },
@@ -1588,7 +1617,7 @@ Page({
       wx.showModal({
         title: "AI 照片处理说明",
         content:
-          "你选择的餐桌照片将发送至开发者部署在中国内地的服务器，并由阿里云百炼的千问和图像生成模型完成菜品识别、热量估算及分享图生成。原始照片不会保存到家庭菜单数据库。请避免上传人物面部或其他无关个人信息。",
+          "你选择的餐桌照片将发送至开发者部署在中国内地的服务器，并由阿里云百炼完成菜品识别、热量估算及分享图生成。原图、识别结果和分享图会按家庭和日期保存，供家庭成员回看；重新上传、删除照片或删除家庭时会一并删除。请避免上传人物面部或其他无关个人信息。",
         confirmText,
         cancelText: "暂不使用",
         success: (result) => resolve(Boolean(result.confirm)),
@@ -1598,7 +1627,10 @@ Page({
   },
 
   async generateMealSharePhoto(photoId, options = {}) {
-    const plan = ensurePlan(this.state, this.data.dateKey);
+    const dateKey = options.dateKey || this.data.dateKey;
+    const taskKey = `${dateKey}:${photoId}`;
+    if (this.resumingShareTasks?.has(taskKey)) return;
+    const plan = ensurePlan(this.state, dateKey);
     const photo = (plan.afterPhotos || []).find((item) => item.id === photoId);
     if (!photo) return;
     const analysis = options.analysis || photo.analysis;
@@ -1611,23 +1643,44 @@ Page({
       (this.photoImages && this.photoImages[photoId]) ||
       photo.image ||
       (photo.localImagePath ? await this.localImageFileToDataUrl(photo.localImagePath).catch(() => "") : "");
-    if (!image) {
-      this.patchPhoto(photoId, { shareStatus: "failed", shareError: "原图没有保存在本地，请重新上传后生成分享图" });
+    if (!image && !photo.remoteStored) {
+      this.patchPhoto(photoId, { shareStatus: "failed", shareError: "原图没有保存成功，请重新上传后生成分享图" }, dateKey);
       if (!options.quiet) showToast("原图没有保存在本地");
       return;
     }
-    this.patchPhoto(photoId, { shareStatus: "loading", shareError: "", shareStartedAt: new Date().toISOString() });
+    this.resumingShareTasks?.add(taskKey);
+    this.patchPhoto(photoId, {
+      shareStatus: "loading",
+      shareError: "",
+      shareStartedAt: photo.shareStartedAt || new Date().toISOString()
+    }, dateKey);
     try {
-      let sharePayload = await requestApi(
-        "/api/analyze-meal-photo",
-        {
-          householdId: this.data.householdId,
-          image,
-          includeShareImage: true,
-          analysis
-        },
-        { timeout: 30000 }
-      );
+      let sharePayload;
+      if (photo.shareTaskId) {
+        sharePayload = {
+          shareTaskId: photo.shareTaskId,
+          shareStatus: photo.shareRemoteStatus || "RUNNING",
+          shareImage: ""
+        };
+      } else {
+        sharePayload = await requestApi(
+          "/api/analyze-meal-photo",
+          {
+            householdId: this.data.householdId,
+            dateKey,
+            photoId,
+            ...(image ? { image } : {}),
+            includeShareImage: true,
+            analysis
+          },
+          { timeout: 30000 }
+        );
+        this.patchPhoto(photoId, {
+          shareTaskId: sharePayload.shareTaskId || "",
+          shareRemoteStatus: sharePayload.shareStatus || "PENDING",
+          remoteStored: true
+        }, dateKey);
+      }
       const deadline = Date.now() + SHARE_TASK_MAX_WAIT_MS;
       while (!sharePayload.shareImage && sharePayload.shareTaskId) {
         if (!["PENDING", "RUNNING"].includes(sharePayload.shareStatus)) {
@@ -1639,28 +1692,95 @@ Page({
           "/api/analyze-meal-photo",
           {
             householdId: this.data.householdId,
+            dateKey,
+            photoId,
             includeShareImage: true,
             analysis,
             shareTaskId: sharePayload.shareTaskId
           },
           { timeout: 30000 }
         );
+        this.patchPhoto(photoId, {
+          shareTaskId: sharePayload.shareTaskId || "",
+          shareRemoteStatus: sharePayload.shareStatus || "RUNNING"
+        }, dateKey);
       }
       this.patchPhoto(photoId, {
         shareImage: sharePayload.shareImage || "",
+        shareOmitted: Boolean(sharePayload.shareImage),
+        shareStored: Boolean(sharePayload.shareImage),
         shareStatus: sharePayload.shareImage ? "done" : "failed",
         shareError: sharePayload.shareImage ? "" : "分享图生成失败",
+        shareTaskId: sharePayload.shareTaskId || "",
+        shareRemoteStatus: sharePayload.shareStatus || "",
         shareStartedAt: null,
         shareCreatedAt: sharePayload.shareImage ? new Date().toISOString() : null
-      });
+      }, dateKey);
       if (!options.quiet && sharePayload.shareImage) showToast("分享图已生成", "success");
     } catch (error) {
+      const stillRunning = /生成时间较长/.test(String(error.message || ""));
       this.patchPhoto(photoId, {
-        shareStatus: "failed",
-        shareError: error.message || "分享图生成失败",
-        shareStartedAt: null
-      });
+        shareStatus: stillRunning ? "loading" : "failed",
+        shareError: stillRunning ? "分享图仍在云端生成，重新打开后会继续获取" : error.message || "分享图生成失败",
+        shareStartedAt: stillRunning ? null : photo.shareStartedAt || null
+      }, dateKey);
       if (!options.quiet) showToast(error.message || "分享图生成失败");
+    } finally {
+      this.resumingShareTasks?.delete(taskKey);
+    }
+  },
+
+  async hydrateMealPhotosForDate(dateKey = this.data.dateKey) {
+    if (!this.data.householdId) return;
+    const plan = ensurePlan(this.state, dateKey);
+    const photos = [...(plan.afterPhotos || [])];
+    for (const photo of photos) {
+      const hydrateKey = `${dateKey}:${photo.id}`;
+      const needsMedia = !photo.shareImage || !(this.photoImages && this.photoImages[photo.id]);
+      if (!needsMedia || this.hydratingPhotoKeys?.has(hydrateKey)) continue;
+      this.hydratingPhotoKeys?.add(hydrateKey);
+      try {
+        const payload = await requestApi(
+          "/api/analyze-meal-photo",
+          {
+            action: "load",
+            householdId: this.data.householdId,
+            dateKey,
+            photoId: photo.id
+          },
+          { timeout: 30000 }
+        );
+        if (payload.image) this.photoImages[photo.id] = payload.image;
+        const remoteRunning = ["PENDING", "RUNNING"].includes(payload.shareStatus);
+        this.patchPhoto(photo.id, {
+          analysis: payload.analysis || photo.analysis,
+          analysisStatus: payload.analysis ? "done" : photo.analysisStatus === "loading" ? "failed" : photo.analysisStatus,
+          analysisError:
+            payload.analysis || photo.analysisStatus !== "loading" ? photo.analysisError : "识别未完成，可以重新估算",
+          shareImage: payload.shareImage || "",
+          shareOmitted: Boolean(payload.shareImage || photo.shareOmitted),
+          shareStored: Boolean(payload.shareImage),
+          shareStatus: payload.shareImage ? "done" : remoteRunning ? "loading" : photo.shareStatus,
+          shareTaskId: payload.shareTaskId || photo.shareTaskId || "",
+          shareRemoteStatus: payload.shareStatus || photo.shareRemoteStatus || "",
+          shareCreatedAt: payload.shareCreatedAt || photo.shareCreatedAt || null,
+          remoteStored: true
+        }, dateKey);
+        if (!payload.shareImage && (payload.analysis || photo.analysis)) {
+          this.generateMealSharePhoto(photo.id, {
+            analysis: payload.analysis || photo.analysis,
+            dateKey,
+            quiet: true
+          });
+        }
+      } catch (error) {
+        if (!/没有找到当天的照片记录/.test(String(error.message || ""))) {
+          console.warn("恢复餐桌照片失败", error);
+        }
+      } finally {
+        this.hydratingPhotoKeys?.delete(hydrateKey);
+        if (dateKey === this.data.dateKey) this.refreshView();
+      }
     }
   },
 
@@ -1712,17 +1832,26 @@ Page({
     });
   },
 
-  removePhoto(event) {
+  async removePhoto(event) {
     const id = event.currentTarget.dataset.id;
-    const plan = ensurePlan(this.state, this.data.dateKey);
+    const dateKey = this.data.dateKey;
+    const plan = ensurePlan(this.state, dateKey);
     const photo = (plan.afterPhotos || []).find((item) => item.id === id);
     this.discardPhotoAssets(photo);
     plan.afterPhotos = (plan.afterPhotos || []).filter((photo) => photo.id !== id);
     this.persistState();
+    if (photo?.remoteStored) {
+      requestApi("/api/analyze-meal-photo", {
+        action: "delete",
+        householdId: this.data.householdId,
+        dateKey,
+        photoId: id
+      }).catch(() => showToast("照片记录删除同步失败，请稍后重试"));
+    }
   },
 
-  patchPhoto(photoId, patch) {
-    const plan = ensurePlan(this.state, this.data.dateKey);
+  patchPhoto(photoId, patch, dateKey = this.data.dateKey) {
+    const plan = ensurePlan(this.state, dateKey);
     plan.afterPhotos = (plan.afterPhotos || []).map((photo) => (photo.id === photoId ? { ...photo, ...patch } : photo));
     this.persistState();
   }
@@ -1822,9 +1951,9 @@ function stripPhotoImages(photo, options = {}) {
     imageOmitted: hadImage,
     shareImage: "",
     shareOmitted: hadShareImage,
-    shareStatus: photo.shareStatus === "done" ? "idle" : photo.shareStatus,
-    shareStartedAt: photo.shareStatus === "done" ? null : photo.shareStartedAt || null,
-    shareCreatedAt: photo.shareStatus === "done" ? null : photo.shareCreatedAt
+    shareStatus: photo.shareStatus,
+    shareStartedAt: photo.shareStartedAt || null,
+    shareCreatedAt: photo.shareCreatedAt || null
   };
 }
 

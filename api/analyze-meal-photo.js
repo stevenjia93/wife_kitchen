@@ -2,7 +2,7 @@ const MAX_BODY_CHARS = 3_000_000;
 const MAX_IMAGE_CHARS = 2_500_000;
 const DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com";
 const DEFAULT_VISION_MODEL = "qwen3-vl-plus";
-const DEFAULT_IMAGE_MODEL = "qwen-image-3.0-pro";
+const DEFAULT_IMAGE_MODEL = "qwen-image-3.0";
 const SHARE_IMAGE_WIDTH = 1024;
 const SHARE_IMAGE_HEIGHT = 1280;
 const PHOTO_ANALYSIS_DAILY_LIMIT = 3;
@@ -35,11 +35,40 @@ function createHandler(database = defaultDatabase, auth = defaultAuth, services 
       const householdId = normalizeHouseholdId(body.householdId);
       const membership = await database.findHouseholdMembership(user.id, householdId);
       if (!membership) throw httpError("你不是这个家庭的成员", 403);
+      const dateKey = body.dateKey ? normalizeDateKey(body.dateKey) : "";
+      const photoId = body.photoId ? normalizePhotoId(body.photoId) : "";
+      if (body.action === "load") {
+        requirePhotoReference(dateKey, photoId);
+        const storedPhoto = await database.loadHouseholdMealPhoto({ householdId, dateKey, photoId });
+        if (!storedPhoto) throw httpError("没有找到当天的照片记录", 404);
+        res.status(200).json(serializeStoredPhoto(storedPhoto));
+        return;
+      }
+      if (body.action === "delete") {
+        requirePhotoReference(dateKey, photoId);
+        await database.deleteHouseholdMealPhoto({ householdId, dateKey, photoId });
+        res.status(200).json({ deleted: true, photoId });
+        return;
+      }
       const includeShareImage = Boolean(body.includeShareImage);
-      const suppliedAnalysis = includeShareImage ? normalizeAnalysis(body.analysis) : null;
+      let storedPhoto = null;
+      if (includeShareImage && dateKey && photoId && database.loadHouseholdMealPhoto) {
+        storedPhoto = await database.loadHouseholdMealPhoto({ householdId, dateKey, photoId });
+      }
+      const suppliedAnalysis = includeShareImage
+        ? normalizeAnalysis(body.analysis || storedPhoto?.analysis)
+        : null;
       if (includeShareImage && body.shareTaskId) {
         if (!suppliedAnalysis?.items?.length) throw httpError("分享图缺少热量分析结果", 400);
         const shareResult = await getShareTask(body.shareTaskId, suppliedAnalysis);
+        if (dateKey && photoId && database.saveHouseholdMealPhotoShare) {
+          await persistShareResult(database, {
+            householdId,
+            dateKey,
+            photoId,
+            shareResult
+          });
+        }
         res.status(200).json({
           analysis: suppliedAnalysis,
           shareImage: shareResult.shareImage,
@@ -49,20 +78,52 @@ function createHandler(database = defaultDatabase, auth = defaultAuth, services 
         return;
       }
 
-      const image = await standardizePhoto(normalizeImage(body.image));
+      const storedImage = storedPhoto ? storedPhotoToDataUrl(storedPhoto, "original") : "";
+      const image = await standardizePhoto(normalizeImage(body.image || storedImage));
       const targetNames = normalizeTargetNames(body.targetNames);
       let usage = null;
       let analysis = suppliedAnalysis;
       if (!analysis?.items?.length) {
+        if (dateKey && photoId && database.upsertHouseholdMealPhoto) {
+          const original = dataImageParts(image);
+          await database.upsertHouseholdMealPhoto({
+            householdId,
+            dateKey,
+            photoId,
+            originalImage: original.buffer,
+            originalMime: original.mime,
+            analysis: null
+          });
+        }
         usage = await database.consumeHouseholdPhotoAnalysis({
           householdId,
           usageDate: usageDateShanghai(),
           limit: PHOTO_ANALYSIS_DAILY_LIMIT
         });
         analysis = await analyzePhoto(image, targetNames);
+        if (dateKey && photoId && database.upsertHouseholdMealPhoto) {
+          const original = dataImageParts(image);
+          await database.upsertHouseholdMealPhoto({
+            householdId,
+            dateKey,
+            photoId,
+            originalImage: original.buffer,
+            originalMime: original.mime,
+            analysis
+          });
+        }
       }
       if (includeShareImage) {
         const shareResult = await startShareTask(image, analysis);
+        if (dateKey && photoId && database.updateHouseholdMealPhotoShareTask) {
+          await database.updateHouseholdMealPhotoShareTask({
+            householdId,
+            dateKey,
+            photoId,
+            taskId: shareResult.taskId,
+            status: shareResult.status
+          });
+        }
         res.status(200).json({
           analysis,
           shareImage: "",
@@ -232,7 +293,7 @@ function buildShareImageRequest(image, analysis) {
     parameters: {
       prompt_extend: true,
       prompt_extend_mode: "direct",
-      enable_thinking: true,
+      enable_thinking: false,
       n: 1,
       size: process.env.DASHSCOPE_IMAGE_SIZE || `${SHARE_IMAGE_WIDTH}*${SHARE_IMAGE_HEIGHT}`,
       negative_prompt:
@@ -384,6 +445,72 @@ function normalizeBox(box = {}) {
 
 function normalizeConfidence(value) {
   return ["low", "medium", "high"].includes(value) ? value : "medium";
+}
+
+function normalizeDateKey(value) {
+  const dateKey = String(value || "").trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(dateKey)) {
+    throw httpError("照片日期不正确", 400);
+  }
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dateKey) {
+    throw httpError("照片日期不正确", 400);
+  }
+  return dateKey;
+}
+
+function normalizePhotoId(value) {
+  const photoId = String(value || "").trim();
+  if (!/^[a-z0-9][a-z0-9_-]{7,119}$/i.test(photoId)) throw httpError("照片编号不正确", 400);
+  return photoId;
+}
+
+function requirePhotoReference(dateKey, photoId) {
+  if (!dateKey || !photoId) throw httpError("缺少照片日期或编号", 400);
+}
+
+function dataImageParts(value) {
+  const match = /^data:image\/(jpeg|jpg|png|webp);base64,([a-z0-9+/=]+)$/i.exec(String(value || ""));
+  if (!match) throw httpError("图片格式不正确", 400);
+  const subtype = match[1].toLowerCase() === "jpg" ? "jpeg" : match[1].toLowerCase();
+  return { mime: `image/${subtype}`, buffer: Buffer.from(match[2], "base64") };
+}
+
+function bufferDataUrl(buffer, mime = "image/jpeg") {
+  if (!buffer?.length) return "";
+  return `data:${mime || "image/jpeg"};base64,${Buffer.from(buffer).toString("base64")}`;
+}
+
+function storedPhotoToDataUrl(photo, kind) {
+  return kind === "share"
+    ? bufferDataUrl(photo?.share_image, photo?.share_mime)
+    : bufferDataUrl(photo?.original_image, photo?.original_mime);
+}
+
+function serializeStoredPhoto(photo) {
+  return {
+    photoId: photo.photo_id,
+    image: storedPhotoToDataUrl(photo, "original"),
+    analysis: photo.analysis || null,
+    shareImage: storedPhotoToDataUrl(photo, "share"),
+    shareTaskId: photo.share_task_id || "",
+    shareStatus: photo.share_status || "idle",
+    shareCreatedAt: photo.share_created_at ? new Date(photo.share_created_at).toISOString() : null,
+    remoteStored: true
+  };
+}
+
+async function persistShareResult(database, { householdId, dateKey, photoId, shareResult }) {
+  const share = shareResult.shareImage ? dataImageParts(shareResult.shareImage) : null;
+  await database.saveHouseholdMealPhotoShare({
+    householdId,
+    dateKey,
+    photoId,
+    taskId: shareResult.taskId,
+    status: shareResult.status,
+    shareImage: share?.buffer || null,
+    shareMime: share?.mime || null
+  });
 }
 
 function normalizeImage(value) {
@@ -547,11 +674,14 @@ module.exports._internals = {
   shareLabel,
   dashscopeConfig,
   getMealShareImageTask,
+  normalizeDateKey,
+  normalizePhotoId,
   normalizeAnalysis,
   normalizeImage,
   normalizeHouseholdId,
   parseJsonText,
   startMealShareImageTask,
+  serializeStoredPhoto,
   standardizeImage,
   usageDateShanghai
 };

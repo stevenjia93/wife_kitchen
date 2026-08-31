@@ -84,7 +84,15 @@ test("keeps the household cover in shared state while stripping transient meal m
         payload: {
           householdCover: cover,
           plans: {
-            "2026-08-31": { afterPhotos: [{ id: "photo-1", image: "data:image/jpeg;base64,meal" }] }
+            "2026-08-31": {
+              afterPhotos: [{
+                id: "photo-1",
+                image: "data:image/jpeg;base64,meal",
+                shareImage: "data:image/jpeg;base64,share",
+                shareStatus: "done",
+                shareCreatedAt: "2026-08-31T02:00:00.000Z"
+              }]
+            }
           }
         }
       }
@@ -95,6 +103,9 @@ test("keeps the household cover in shared state while stripping transient meal m
   assert.equal(response.statusCode, 200);
   assert.equal(savedPayload.householdCover, cover);
   assert.equal(savedPayload.plans["2026-08-31"].afterPhotos[0].image, "");
+  assert.equal(savedPayload.plans["2026-08-31"].afterPhotos[0].shareImage, "");
+  assert.equal(savedPayload.plans["2026-08-31"].afterPhotos[0].shareStatus, "done");
+  assert.equal(savedPayload.plans["2026-08-31"].afterPhotos[0].shareCreatedAt, "2026-08-31T02:00:00.000Z");
 });
 
 test("rejects an invalid household id before membership access", async () => {

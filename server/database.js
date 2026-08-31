@@ -106,6 +106,78 @@ async function consumeHouseholdPhotoAnalysis({ householdId, usageDate, limit }) 
   return { used, remaining: Math.max(0, limit - used), limit };
 }
 
+async function upsertHouseholdMealPhoto({ householdId, dateKey, photoId, originalImage, originalMime, analysis }) {
+  const result = await getPool().query(
+    `insert into household_meal_photos
+       (household_id, date_key, photo_id, original_image, original_mime, analysis,
+        share_task_id, share_status, share_image, share_mime, share_created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6::jsonb, null, 'idle', null, null, null, now())
+     on conflict (household_id, date_key) do update
+       set photo_id = excluded.photo_id,
+           original_image = excluded.original_image,
+           original_mime = excluded.original_mime,
+           analysis = excluded.analysis,
+           share_task_id = null,
+           share_status = 'idle',
+           share_image = null,
+           share_mime = null,
+           share_created_at = null,
+           updated_at = now()
+     returning photo_id, share_status, updated_at`,
+    [householdId, dateKey, photoId, originalImage, originalMime, JSON.stringify(analysis || null)]
+  );
+  return result.rows[0] || null;
+}
+
+async function loadHouseholdMealPhoto({ householdId, dateKey, photoId }) {
+  const result = await getPool().query(
+    `select photo_id, original_image, original_mime, analysis, share_task_id, share_status,
+            share_image, share_mime, share_created_at, created_at, updated_at
+     from household_meal_photos
+     where household_id = $1 and date_key = $2 and ($3::text is null or photo_id = $3)
+     limit 1`,
+    [householdId, dateKey, photoId || null]
+  );
+  return result.rows[0] || null;
+}
+
+async function updateHouseholdMealPhotoShareTask({ householdId, dateKey, photoId, taskId, status }) {
+  const result = await getPool().query(
+    `update household_meal_photos
+     set share_task_id = $4, share_status = $5, updated_at = now()
+     where household_id = $1 and date_key = $2 and photo_id = $3
+     returning photo_id, share_task_id, share_status, updated_at`,
+    [householdId, dateKey, photoId, taskId, status]
+  );
+  return result.rows[0] || null;
+}
+
+async function saveHouseholdMealPhotoShare({ householdId, dateKey, photoId, taskId, status, shareImage, shareMime }) {
+  const result = await getPool().query(
+    `update household_meal_photos
+     set share_task_id = $4,
+         share_status = $5,
+         share_image = coalesce($6, share_image),
+         share_mime = coalesce($7, share_mime),
+         share_created_at = case when $6 is null then share_created_at else now() end,
+         updated_at = now()
+     where household_id = $1 and date_key = $2 and photo_id = $3
+     returning photo_id, share_task_id, share_status, share_created_at, updated_at`,
+    [householdId, dateKey, photoId, taskId || null, status, shareImage || null, shareMime || null]
+  );
+  return result.rows[0] || null;
+}
+
+async function deleteHouseholdMealPhoto({ householdId, dateKey, photoId }) {
+  const result = await getPool().query(
+    `delete from household_meal_photos
+     where household_id = $1 and date_key = $2 and ($3::text is null or photo_id = $3)
+     returning photo_id`,
+    [householdId, dateKey, photoId || null]
+  );
+  return result.rows[0] || null;
+}
+
 async function upsertWechatUser({ openid, unionid }) {
   const result = await getPool().query(
     `insert into users (wechat_openid, wechat_unionid)
@@ -355,13 +427,18 @@ module.exports = {
   createUserSession,
   databaseSslOptions,
   deleteHouseholdOwnedByUser,
+  deleteHouseholdMealPhoto,
   deleteUserSession,
   findHouseholdMembership,
   findUserBySessionTokenHash,
   findOrCreateHousehold,
   joinHouseholdByInvitation,
   listUserHouseholds,
+  loadHouseholdMealPhoto,
   loadHouseholdState,
+  saveHouseholdMealPhotoShare,
   saveHouseholdState,
+  updateHouseholdMealPhotoShareTask,
+  upsertHouseholdMealPhoto,
   upsertWechatUser
 };
