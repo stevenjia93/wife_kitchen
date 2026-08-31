@@ -39,8 +39,8 @@ test("keeps meal photo upload available before an order is submitted", () => {
   tomorrow.setDate(tomorrow.getDate() + 1);
   assert.equal(canUploadMealPhotos(state, plan, dateKeyFromDate(tomorrow)), true);
 
-  state.photoAnalysisUsage.count = 3;
-  assert.equal(canUploadMealPhotos(state, plan, todayKey()), false);
+  state.photoAnalysisUsage = { dateKey: todayKey(), count: 99 };
+  assert.equal(canUploadMealPhotos(state, plan, todayKey()), true);
 });
 
 test("blocks replacing a photo while AI processing is still running", () => {

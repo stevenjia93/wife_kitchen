@@ -3,7 +3,6 @@ const { AUTH_KEY, loginWithWechat, requestApi, showToast, requirePrivacyAuthoriz
 const SHARE_TASK_POLL_INTERVAL_MS = 5000;
 const SHARE_TASK_MAX_WAIT_MS = 12 * 60 * 1000;
 const MAX_RECIPE_STEPS = 32;
-const MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS = 3;
 const MAX_HOUSEHOLD_COVER_BYTES = 850 * 1024;
 const mealShortLabels = { breakfast: "早", lunch: "午", dinner: "晚" };
 
@@ -238,11 +237,6 @@ Page({
     const hasMenuDraft = selectedDishCount(plan) + wishCount(plan) > 0 || mealOrder.some((meal) => plan.skipped[meal]);
     const shopping = orderVisible ? aggregateShoppingList(this.state, plan) : [];
     const photos = (plan.afterPhotos || []).map((photo) => this.buildPhotoView(photo));
-    if (this.state.photoAnalysisUsage?.dateKey !== todayKey()) {
-      this.state.photoAnalysisUsage = { dateKey: todayKey(), count: 0 };
-    }
-    const photoAnalysisAttempts = Math.max(0, Number(this.state.photoAnalysisUsage?.count || 0));
-    const photoAttemptsRemaining = Math.max(0, MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS - photoAnalysisAttempts);
     const photoBusy = (plan.afterPhotos || []).some(
       (photo) => photo.analysisStatus === "loading" || photo.shareStatus === "loading"
     );
@@ -325,20 +319,15 @@ Page({
       analyzedCount: photos.filter((photo) => photo.analysisStatus === "done" && photo.analysis).length,
       canUploadPhotos: canUploadMealPhotos(this.state, plan, dateKey),
       showUploadButton: isEditableDate(dateKey),
-      photoAttemptsRemaining,
       photoPanelSubtitle: photos.length
         ? "重新上传只保留最新一张，并替换当前照片。"
         : "拍一张整桌照，先识别菜品并估算热量。",
       uploadPhotoText: photoBusy
         ? "照片处理中"
-        : photoAttemptsRemaining <= 0
-          ? "今日识别次数已用完"
-          : photos.length
-            ? "重新上传整桌照"
-            : "上传整桌照",
-      uploadPhotoHint: photoAttemptsRemaining <= 0
-        ? "每天最多识别 3 次，明天会自动恢复"
-        : "先展示热量识别，随后自动生成分享图",
+        : photos.length
+          ? "重新上传整桌照"
+          : "上传整桌照",
+      uploadPhotoHint: "先展示热量识别，随后自动生成分享图",
       photos
     });
   },
@@ -1368,9 +1357,7 @@ Page({
     const plan = ensurePlan(this.state, this.data.dateKey);
     if (!canUploadMealPhotos(this.state, plan, this.data.dateKey)) {
       if (!isEditableDate(this.data.dateKey)) showToast("历史日期不能再上传照片");
-      else if (Number(this.state.photoAnalysisUsage?.count || 0) >= MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS) {
-        showToast("今天的 3 次照片识别已用完");
-      } else showToast("当前照片还在处理中");
+      else showToast("当前照片还在处理中");
       return;
     }
     const previousPhotos = [...(plan.afterPhotos || [])];
@@ -1412,10 +1399,6 @@ Page({
           previousPhotos.forEach((item) => this.discardPhotoAssets(item));
           this.photoImages[photo.id] = image;
           plan.afterPhotos = [photo];
-          this.state.photoAnalysisUsage = {
-            dateKey: todayKey(),
-            count: Number(this.state.photoAnalysisUsage?.count || 0) + 1
-          };
           this.persistState();
           wx.hideLoading();
           this.analyzeMealPhoto(photo.id);
@@ -1431,7 +1414,7 @@ Page({
     return new Promise((resolve) => {
       wx.showModal({
         title: "重新上传照片？",
-        content: "新照片会替换上一张，之前的识别结果和分享图也会作废，并使用 1 次新的照片识别额度。",
+        content: "新照片会替换上一张，之前的识别结果和分享图也会作废。",
         confirmText: "替换上传",
         confirmColor: "#d84a2b",
         cancelText: "保留原图",
@@ -1561,28 +1544,28 @@ Page({
         dateKey,
         photoId,
         image,
-        includeShareImage: false
+        includeShareImage: true
       });
-      if (Number.isInteger(payload.usage?.remaining)) {
-        this.state.photoAnalysisUsage = {
-          dateKey: todayKey(),
-          count: MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS - payload.usage.remaining
-        };
-      }
+      const shareRunning = Boolean(payload.shareTaskId) && ["PENDING", "RUNNING"].includes(payload.shareStatus);
       this.patchPhoto(photoId, {
         analysis: payload.analysis,
         analysisStatus: "done",
         analysisError: "",
-        shareStatus: "idle",
-        shareError: "",
+        shareImage: payload.shareImage || "",
+        shareStatus: payload.shareImage ? "done" : shareRunning ? "loading" : "failed",
+        shareError: payload.shareError || (shareRunning ? "" : "分享图任务启动失败，可以稍后重试"),
+        shareTaskId: payload.shareTaskId || "",
+        shareRemoteStatus: payload.shareStatus || "",
+        shareStartedAt: shareRunning ? new Date().toISOString() : null,
         remoteStored: true
       }, dateKey);
-      await this.generateMealSharePhoto(photoId, { image, analysis: payload.analysis, quiet: true, dateKey });
+      if (shareRunning) {
+        await this.generateMealSharePhoto(photoId, { image, analysis: payload.analysis, quiet: true, dateKey });
+      } else if (payload.shareError) {
+        showToast("热量识别完成，分享图生成失败，可稍后重试");
+      }
     } catch (error) {
       const latestPlan = ensurePlan(this.state, dateKey);
-      if (/照片识别已用完/.test(String(error.message || ""))) {
-        this.state.photoAnalysisUsage = { dateKey: todayKey(), count: MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS };
-      }
       const latestPhoto = (latestPlan.afterPhotos || []).find((item) => item.id === photoId) || photo;
       this.patchPhoto(photoId, {
         analysisStatus: latestPhoto.analysis ? "done" : "failed",
@@ -1594,17 +1577,8 @@ Page({
   },
 
   async retryPhoto(event) {
-    if (Number(this.state.photoAnalysisUsage?.count || 0) >= MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS) {
-      showToast("今天的 3 次照片识别已用完");
-      return;
-    }
     const consented = await this.confirmAiPhotoProcessing("重新估算");
     if (!consented) return;
-    this.state.photoAnalysisUsage = {
-      dateKey: todayKey(),
-      count: Number(this.state.photoAnalysisUsage?.count || 0) + 1
-    };
-    this.persistState();
     this.analyzeMealPhoto(event.currentTarget.dataset.id);
   },
 

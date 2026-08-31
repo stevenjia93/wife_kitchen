@@ -14,23 +14,18 @@ const {
   getMealShareImageTask,
   parseJsonText,
   startMealShareImageTask,
-  standardizeImage,
-  usageDateShanghai
+  standardizeImage
 } = analyzeMealPhotoModule._internals;
 
-test("照片识别验证家庭成员并原子消耗每日额度", async () => {
+test("照片识别验证家庭成员且不再消耗每日额度", async () => {
   const householdId = "11111111-1111-4111-8111-111111111111";
-  let consumed;
   const database = {
     findHouseholdMembership: async (userId, id) => {
       assert.equal(userId, "user-1");
       assert.equal(id, householdId);
       return { role: "member" };
     },
-    consumeHouseholdPhotoAnalysis: async (input) => {
-      consumed = input;
-      return { used: 2, remaining: 1, limit: 3 };
-    }
+    consumeHouseholdPhotoAnalysis: async () => assert.fail("photo recognition must not consume a daily quota")
   };
   const auth = { requireUser: async () => ({ id: "user-1" }) };
   const response = responseRecorder();
@@ -48,17 +43,14 @@ test("照片识别验证家庭成员并原子消耗每日额度", async () => {
   );
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.body.usage, { used: 2, remaining: 1, limit: 3 });
-  assert.equal(consumed.householdId, householdId);
-  assert.equal(consumed.limit, 3);
-  assert.match(consumed.usageDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(response.body.usage, undefined);
 });
 
-test("已有识别结果生成分享图时不重复消耗照片识别额度", async () => {
+test("已有识别结果可以直接启动分享图任务", async () => {
   const householdId = "22222222-2222-4222-8222-222222222222";
   const database = {
     findHouseholdMembership: async () => ({ role: "owner" }),
-    consumeHouseholdPhotoAnalysis: async () => assert.fail("share generation must not consume recognition quota")
+    consumeHouseholdPhotoAnalysis: async () => assert.fail("share generation must not use the removed quota service")
   };
   const auth = { requireUser: async () => ({ id: "user-2" }) };
   const response = responseRecorder();
@@ -94,7 +86,84 @@ test("已有识别结果生成分享图时不重复消耗照片识别额度", as
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.body.shareTaskId, "task-1");
-  assert.equal(response.body.usage, null);
+  assert.equal(response.body.usage, undefined);
+});
+
+test("一次上传请求会保存识别结果并立即启动分享图任务", async () => {
+  const householdId = "66666666-6666-4666-8666-666666666666";
+  const saved = [];
+  let taskUpdate;
+  const database = {
+    findHouseholdMembership: async () => ({ role: "owner" }),
+    upsertHouseholdMealPhoto: async (value) => saved.push(value),
+    updateHouseholdMealPhotoShareTask: async (value) => {
+      taskUpdate = value;
+    }
+  };
+  const handler = createHandler(database, { requireUser: async () => ({ id: "user-6" }) }, {
+    standardizeImage: async (image) => image,
+    analyzeMealPhoto: async () => ({
+      totalCalories: 420,
+      confidence: "medium",
+      items: [{ label: "宫保鸡丁", calories: 420, bbox: { x: 0.1, y: 0.2, width: 0.5, height: 0.4 } }]
+    }),
+    startMealShareImageTask: async () => ({ taskId: "task-auto-start", status: "PENDING" })
+  });
+  const response = responseRecorder();
+
+  await handler({
+    method: "POST",
+    body: {
+      householdId,
+      dateKey: "2026-08-31",
+      photoId: "photo-auto-start",
+      image: "data:image/jpeg;base64,AA==",
+      includeShareImage: true
+    }
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].analysis.totalCalories, 420);
+  assert.equal(taskUpdate.taskId, "task-auto-start");
+  assert.equal(response.body.shareTaskId, "task-auto-start");
+  assert.equal(response.body.shareStatus, "PENDING");
+});
+
+test("分享图任务启动失败时仍返回已经完成的热量识别", async () => {
+  const householdId = "77777777-7777-4777-8777-777777777777";
+  const database = { findHouseholdMembership: async () => ({ role: "owner" }) };
+  const handler = createHandler(database, { requireUser: async () => ({ id: "user-7" }) }, {
+    standardizeImage: async (image) => image,
+    analyzeMealPhoto: async () => ({
+      totalCalories: 180,
+      confidence: "medium",
+      items: [{ label: "蒜蓉西兰花", calories: 180, bbox: { x: 0.2, y: 0.2, width: 0.4, height: 0.4 } }]
+    }),
+    startMealShareImageTask: async () => {
+      throw new Error("百炼任务创建失败");
+    }
+  });
+  const response = responseRecorder();
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    await handler({
+      method: "POST",
+      body: {
+        householdId,
+        image: "data:image/jpeg;base64,AA==",
+        includeShareImage: true
+      }
+    }, response);
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.analysis.totalCalories, 180);
+  assert.equal(response.body.shareStatus, "FAILED");
+  assert.equal(response.body.shareError, "百炼任务创建失败");
 });
 
 test("照片识别结果和原图按家庭日期保存", async () => {
@@ -102,7 +171,6 @@ test("照片识别结果和原图按家庭日期保存", async () => {
   let stored;
   const database = {
     findHouseholdMembership: async () => ({ role: "member" }),
-    consumeHouseholdPhotoAnalysis: async () => ({ used: 1, remaining: 2, limit: 3 }),
     upsertHouseholdMealPhoto: async (value) => {
       stored = value;
       return { photo_id: value.photoId };
@@ -218,11 +286,6 @@ test("分享图任务编号和完成图片会写回当天照片记录", async ()
   assert.equal(savedShare.status, "SUCCEEDED");
   assert.equal(savedShare.shareMime, "image/jpeg");
   assert.equal(savedShare.shareImage.toString(), "share");
-});
-
-test("每日额度按上海自然日计算", () => {
-  assert.equal(usageDateShanghai(new Date("2026-08-30T15:59:59.000Z")), "2026-08-30");
-  assert.equal(usageDateShanghai(new Date("2026-08-30T16:00:00.000Z")), "2026-08-31");
 });
 
 test("千问 VL 使用百炼北京兼容接口并规范化分析结果", async () => {

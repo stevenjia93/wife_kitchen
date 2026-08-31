@@ -352,7 +352,6 @@
           <view class="section-title">整桌照片热量识别</view>
           <view class="subtitle">{{photoPanelSubtitle}}</view>
         </view>
-        <view class="pill">剩 {{photoAttemptsRemaining}} 次</view>
       </view>
       <button wx:if="{{showUploadButton}}" class="upload-card" disabled="{{!canUploadPhotos}}" bindtap="uploadMealPhoto">
         <text>{{uploadPhotoText}}</text>

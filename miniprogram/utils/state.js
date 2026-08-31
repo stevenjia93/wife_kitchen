@@ -233,8 +233,7 @@ function createDefaultState() {
     feedback: {},
     checkedItems: {},
     shoppingGroupCollapsed: {},
-    preferredMeals: [...mealOrder],
-    photoAnalysisUsage: { dateKey: todayKey(), count: 0 }
+    preferredMeals: [...mealOrder]
   };
 }
 
@@ -249,7 +248,6 @@ function normalizeAppState(value) {
     checkedItems: value && typeof value.checkedItems === "object" ? value.checkedItems : {},
     shoppingGroupCollapsed: value && typeof value.shoppingGroupCollapsed === "object" ? value.shoppingGroupCollapsed : {},
     preferredMeals: normalizeMealKeys(value && value.preferredMeals),
-    photoAnalysisUsage: normalizeDailyPhotoAnalysisUsage(value && value.photoAnalysisUsage),
     plans: {
       ...base.plans,
       ...((value && value.plans) || {})
@@ -521,16 +519,9 @@ function canViewOrder(plan, key) {
 
 function canUploadMealPhotos(state, plan, key) {
   if (!Boolean(state && plan && key) || !isEditableDate(key)) return false;
-  if (Number(state.photoAnalysisUsage?.count || 0) >= 3) return false;
   return !(plan.afterPhotos || []).some(
     (photo) => photo.analysisStatus === "loading" || photo.shareStatus === "loading"
   );
-}
-
-function normalizeDailyPhotoAnalysisUsage(value) {
-  const key = todayKey();
-  if (!value || value.dateKey !== key) return { dateKey: key, count: 0 };
-  return { dateKey: key, count: Math.max(0, Math.floor(Number(value.count) || 0)) };
 }
 
 function planFoodTargets(state, plan) {

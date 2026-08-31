@@ -10,11 +10,15 @@ test("re-upload replaces the current photo and auto-generates a share image afte
   const template = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxml"), "utf8");
   assert.match(source, /plan\.afterPhotos = \[photo\]/);
   assert.match(source, /this\.analyzeMealPhoto\(photo\.id\)/);
+  assert.match(source, /includeShareImage:\s*true/);
+  assert.match(source, /shareTaskId:\s*payload\.shareTaskId/);
   assert.match(source, /await this\.generateMealSharePhoto\(photoId, \{ image, analysis: payload\.analysis, quiet: true, dateKey \}\)/);
   assert.match(source, /async generateSharePhoto\(event\) \{\s*this\.generateMealSharePhoto/);
   assert.match(template, /整桌照片热量识别/);
   assert.match(template, /\{\{item\.totalCalories\}\}/);
   assert.match(template, /\{\{item\.calories\}\} kcal/);
+  assert.doesNotMatch(source, /MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS|今天的 3 次照片识别已用完/);
+  assert.doesNotMatch(template, /剩 \{\{photoAttemptsRemaining\}\} 次/);
 });
 
 test("meal photos and cloud generation tasks resume after reopening or changing dates", () => {
