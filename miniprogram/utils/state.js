@@ -519,9 +519,7 @@ function canViewOrder(plan, key) {
 
 function canUploadMealPhotos(state, plan, key) {
   if (!Boolean(state && plan && key) || !isEditableDate(key)) return false;
-  return !(plan.afterPhotos || []).some(
-    (photo) => photo.analysisStatus === "loading" || photo.shareStatus === "loading"
-  );
+  return true;
 }
 
 function planFoodTargets(state, plan) {

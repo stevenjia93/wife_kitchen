@@ -43,11 +43,11 @@ test("keeps meal photo upload available before an order is submitted", () => {
   assert.equal(canUploadMealPhotos(state, plan, todayKey()), true);
 });
 
-test("blocks replacing a photo while AI processing is still running", () => {
+test("allows replacing a photo while AI processing is still running", () => {
   const state = createDefaultState();
   const plan = emptyPlan();
   plan.afterPhotos = [{ id: "photo-1", analysisStatus: "loading", shareStatus: "idle" }];
-  assert.equal(canUploadMealPhotos(state, plan, todayKey()), false);
+  assert.equal(canUploadMealPhotos(state, plan, todayKey()), true);
 });
 
 test("keeps a valid shared household cover and rejects oversized cover data", () => {

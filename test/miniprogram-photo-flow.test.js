@@ -10,6 +10,12 @@ test("re-upload replaces the current photo and auto-generates a share image afte
   const template = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxml"), "utf8");
   assert.match(source, /plan\.afterPhotos = \[photo\]/);
   assert.match(source, /this\.analyzeMealPhoto\(photo\.id\)/);
+  const uploadStart = source.indexOf("async uploadMealPhoto() {");
+  const uploadEnd = source.indexOf("confirmPhotoReplacement() {", uploadStart);
+  const uploadSource = source.slice(uploadStart, uploadEnd);
+  assert.ok(uploadSource.indexOf("plan.afterPhotos = [photo]") < uploadSource.indexOf("await this.imageFileToDataUrl(filePath)"));
+  assert.match(uploadSource, /fail:\s*\(error\)\s*=>/);
+  assert.match(source, /compressedWidth:\s*1600/);
   assert.match(source, /includeShareImage:\s*true/);
   assert.match(source, /shareTaskId:\s*payload\.shareTaskId/);
   assert.match(source, /await this\.generateMealSharePhoto\(photoId, \{ image, analysis: payload\.analysis, quiet: true, dateKey \}\)/);

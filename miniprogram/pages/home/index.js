@@ -1378,34 +1378,40 @@ Page({
       success: async (result) => {
         const filePath = result.tempFiles && result.tempFiles[0] && result.tempFiles[0].tempFilePath;
         if (!filePath) return;
+        const photoId = `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const photo = {
+          id: photoId,
+          dateKey: this.data.dateKey,
+          image: "",
+          localImagePath: filePath,
+          imageOmitted: true,
+          createdAt: new Date().toISOString(),
+          analysisStatus: "loading",
+          shareStatus: "idle",
+          shareTaskId: "",
+          remoteStored: false,
+          shareStored: false
+        };
+        previousPhotos.forEach((item) => this.discardPhotoAssets(item));
+        plan.afterPhotos = [photo];
+        this.persistState();
         try {
-          wx.showLoading({ title: "处理照片" });
           const image = await this.imageFileToDataUrl(filePath);
-          const photoId = `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
           const localImagePath = await this.dataUrlToLocalImageFile(image, photoId).catch(() => "");
-          const photo = {
-            id: photoId,
-            dateKey: this.data.dateKey,
-            image: "",
-            localImagePath,
-            imageOmitted: true,
-            createdAt: new Date().toISOString(),
-            analysisStatus: "loading",
-            shareStatus: "idle",
-            shareTaskId: "",
-            remoteStored: false,
-            shareStored: false
-          };
-          previousPhotos.forEach((item) => this.discardPhotoAssets(item));
           this.photoImages[photo.id] = image;
-          plan.afterPhotos = [photo];
-          this.persistState();
-          wx.hideLoading();
+          this.patchPhoto(photo.id, { localImagePath: localImagePath || filePath }, photo.dateKey);
           this.analyzeMealPhoto(photo.id);
         } catch (error) {
-          wx.hideLoading();
+          this.patchPhoto(photo.id, {
+            analysisStatus: "failed",
+            analysisError: error.message || "照片处理失败",
+            shareStatus: "idle"
+          }, photo.dateKey);
           showToast(error.message || "照片处理失败");
         }
+      },
+      fail: (error) => {
+        if (!/cancel/i.test(String(error.errMsg || ""))) showToast(error.errMsg || "照片选择失败");
       }
     });
   },
@@ -1456,7 +1462,9 @@ Page({
     return new Promise((resolve, reject) => {
       wx.compressImage({
         src: filePath,
-        quality: 68,
+        quality: 64,
+        compressedWidth: 1600,
+        compressedHeight: 1600,
         success: (compressed) => {
           try {
             const fs = wx.getFileSystemManager();
