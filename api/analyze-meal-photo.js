@@ -281,7 +281,7 @@ async function getMealShareImageTask(taskIdValue, analysis) {
 
 function buildShareImageRequest(image, analysis) {
   return {
-    model: process.env.DASHSCOPE_IMAGE_MODEL || DEFAULT_IMAGE_MODEL,
+    model: resolveShareImageModel(),
     input: {
       messages: [
         {
@@ -301,6 +301,14 @@ function buildShareImageRequest(image, analysis) {
       watermark: false
     }
   };
+}
+
+function resolveShareImageModel() {
+  const configured = String(process.env.DASHSCOPE_IMAGE_MODEL || "").trim();
+  // qwen-image-3.0-pro was the previous production default. Preserve custom
+  // models, but move that legacy value to the faster standard model.
+  if (!configured || configured === "qwen-image-3.0-pro") return DEFAULT_IMAGE_MODEL;
+  return configured;
 }
 
 function buildShareImagePrompt(analysis) {

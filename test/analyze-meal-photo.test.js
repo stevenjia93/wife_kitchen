@@ -291,8 +291,10 @@ test("分享图使用百炼异步任务接口创建", async () => {
   const originalFetch = global.fetch;
   const originalKey = process.env.DASHSCOPE_API_KEY;
   const originalBaseUrl = process.env.DASHSCOPE_BASE_URL;
+  const originalImageModel = process.env.DASHSCOPE_IMAGE_MODEL;
   process.env.DASHSCOPE_API_KEY = "test-dashscope-key";
   process.env.DASHSCOPE_BASE_URL = "https://example.maas.aliyuncs.com";
+  process.env.DASHSCOPE_IMAGE_MODEL = "qwen-image-3.0-pro";
 
   let generationRequest;
   global.fetch = async (url, options = {}) => {
@@ -329,6 +331,7 @@ test("分享图使用百炼异步任务接口创建", async () => {
     global.fetch = originalFetch;
     restoreEnv("DASHSCOPE_API_KEY", originalKey);
     restoreEnv("DASHSCOPE_BASE_URL", originalBaseUrl);
+    restoreEnv("DASHSCOPE_IMAGE_MODEL", originalImageModel);
   }
 });
 
