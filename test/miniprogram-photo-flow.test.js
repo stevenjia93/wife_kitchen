@@ -14,8 +14,11 @@ test("re-upload replaces the current photo and auto-generates a share image afte
   const uploadEnd = source.indexOf("confirmPhotoReplacement() {", uploadStart);
   const uploadSource = source.slice(uploadStart, uploadEnd);
   assert.ok(uploadSource.indexOf("plan.afterPhotos = [photo]") < uploadSource.indexOf("await this.imageFileToDataUrl(filePath)"));
+  assert.ok(uploadSource.indexOf("this.refreshView()") < uploadSource.indexOf("this.persistState()"));
+  assert.match(uploadSource, /照片已选择，正在识别/);
   assert.match(uploadSource, /fail:\s*\(error\)\s*=>/);
   assert.match(source, /compressedWidth:\s*1600/);
+  assert.match(source, /setTimeout\(\(\) => readImage\(filePath\), 12_000\)/);
   assert.match(source, /includeShareImage:\s*true/);
   assert.match(source, /shareTaskId:\s*payload\.shareTaskId/);
   assert.match(source, /await this\.generateMealSharePhoto\(photoId, \{ image, analysis: payload\.analysis, quiet: true, dateKey \}\)/);
@@ -25,6 +28,72 @@ test("re-upload replaces the current photo and auto-generates a share image afte
   assert.match(template, /\{\{item\.calories\}\} kcal/);
   assert.doesNotMatch(source, /MAX_DAILY_PHOTO_ANALYSIS_ATTEMPTS|今天的 3 次照片识别已用完/);
   assert.doesNotMatch(template, /剩 \{\{photoAttemptsRemaining\}\} 次/);
+});
+
+test("selecting a photo refreshes the card before preprocessing and starts recognition", async () => {
+  const pagePath = path.join(projectRoot, "miniprogram/pages/home/index.js");
+  const stateUtils = require(path.join(projectRoot, "miniprogram/utils/state.js"));
+  const previousGlobals = { Page: global.Page, wx: global.wx, getApp: global.getApp };
+  let pageConfig;
+  let chooseCallback;
+  const toasts = [];
+
+  try {
+    global.getApp = () => ({ globalData: { apiBase: "https://api.wife-kitchen.com" } });
+    global.Page = (config) => {
+      pageConfig = config;
+    };
+    global.wx = {
+      env: { USER_DATA_PATH: "/mock-data" },
+      requirePrivacyAuthorize: ({ success }) => success(),
+      showModal: ({ success }) => success({ confirm: true }),
+      showToast: (options) => toasts.push(options.title),
+      chooseMedia: (options) => {
+        chooseCallback = Promise.resolve(
+          options.success({ tempFiles: [{ tempFilePath: "/mock-input/photo.jpg" }] })
+        );
+      },
+      compressImage: ({ success }) => success({ tempFilePath: "/mock-input/compressed.jpg" }),
+      getFileSystemManager: () => ({
+        readFileSync: () => Buffer.from("photo-bytes").toString("base64"),
+        writeFile: ({ success }) => success(),
+        unlink: ({ success }) => success && success()
+      }),
+      setStorageSync() {},
+      removeStorageSync() {}
+    };
+
+    delete require.cache[require.resolve(pagePath)];
+    require(pagePath);
+    const page = {
+      ...pageConfig,
+      data: { ...pageConfig.data, authLoading: false, householdId: "household-test" },
+      state: stateUtils.createDefaultState(),
+      photoImages: {},
+      setData(patch, callback) {
+        this.data = { ...this.data, ...patch };
+        if (callback) callback();
+      },
+      queueRemoteSave() {}
+    };
+    let sawLoadingCard = false;
+    page.analyzeMealPhoto = async () => {
+      sawLoadingCard = page.data.photos.length === 1 && page.data.photos[0].analysisStatus === "loading";
+    };
+
+    await page.uploadMealPhoto();
+    await chooseCallback;
+
+    assert.equal(sawLoadingCard, true);
+    assert.equal(page.data.photos.length, 1);
+    assert.equal(page.data.photos[0].localImagePath, "/mock-data/meal-" + page.data.photos[0].id + ".jpg");
+    assert.ok(toasts.includes("照片已选择，正在识别"));
+  } finally {
+    delete require.cache[require.resolve(pagePath)];
+    global.Page = previousGlobals.Page;
+    global.wx = previousGlobals.wx;
+    global.getApp = previousGlobals.getApp;
+  }
 });
 
 test("meal photos and cloud generation tasks resume after reopening or changing dates", () => {

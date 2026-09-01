@@ -185,8 +185,12 @@ Page({
     try {
       wx.setStorageSync(storageKey, compacted);
     } catch {
-      wx.removeStorageSync(storageKey);
-      wx.setStorageSync(storageKey, compactStateForStorage(compacted, { stripAllImages: true }));
+      try {
+        wx.removeStorageSync(storageKey);
+        wx.setStorageSync(storageKey, compactStateForStorage(compacted, { stripAllImages: true }));
+      } catch (error) {
+        console.warn("本地状态保存失败", error);
+      }
     }
   },
 
@@ -1377,7 +1381,10 @@ Page({
       sizeType: ["compressed"],
       success: async (result) => {
         const filePath = result.tempFiles && result.tempFiles[0] && result.tempFiles[0].tempFilePath;
-        if (!filePath) return;
+        if (!filePath) {
+          showToast("没有读取到所选照片，请重新选择");
+          return;
+        }
         const photoId = `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const photo = {
           id: photoId,
@@ -1394,6 +1401,8 @@ Page({
         };
         previousPhotos.forEach((item) => this.discardPhotoAssets(item));
         plan.afterPhotos = [photo];
+        this.refreshView();
+        showToast("照片已选择，正在识别");
         this.persistState();
         try {
           const image = await this.imageFileToDataUrl(filePath);
@@ -1460,31 +1469,36 @@ Page({
 
   imageFileToDataUrl(filePath) {
     return new Promise((resolve, reject) => {
-      wx.compressImage({
-        src: filePath,
-        quality: 64,
-        compressedWidth: 1600,
-        compressedHeight: 1600,
-        success: (compressed) => {
-          try {
-            const fs = wx.getFileSystemManager();
-            const base64 = fs.readFileSync(compressed.tempFilePath || filePath, "base64");
-            if (!base64) throw new Error("图片读取失败");
-            resolve(`data:image/jpeg;base64,${base64}`);
-          } catch (error) {
-            reject(error);
-          }
-        },
-        fail: () => {
-          try {
-            const fs = wx.getFileSystemManager();
-            const base64 = fs.readFileSync(filePath, "base64");
-            resolve(`data:image/jpeg;base64,${base64}`);
-          } catch (error) {
-            reject(error);
-          }
+      let settled = false;
+      const readImage = (targetPath) => {
+        if (settled) return;
+        try {
+          const fs = wx.getFileSystemManager();
+          const base64 = fs.readFileSync(targetPath || filePath, "base64");
+          if (!base64) throw new Error("图片读取失败");
+          if (base64.length > 2_300_000) throw new Error("照片太大，请裁剪后重新上传");
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve(`data:image/jpeg;base64,${base64}`);
+        } catch (error) {
+          settled = true;
+          clearTimeout(timeoutId);
+          reject(error);
         }
-      });
+      };
+      const timeoutId = setTimeout(() => readImage(filePath), 12_000);
+      try {
+        wx.compressImage({
+          src: filePath,
+          quality: 64,
+          compressedWidth: 1600,
+          compressedHeight: 1600,
+          success: (compressed) => readImage(compressed.tempFilePath || filePath),
+          fail: () => readImage(filePath)
+        });
+      } catch {
+        readImage(filePath);
+      }
     });
   },
 
