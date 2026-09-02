@@ -9,6 +9,7 @@ const root = __dirname;
 app.disable("x-powered-by");
 app.set("trust proxy", process.env.TRUST_PROXY === "true" ? 1 : false);
 app.use(express.json({ limit: "6mb", type: ["application/json", "application/*+json"] }));
+app.use(express.raw({ limit: "12mb", type: "application/octet-stream" }));
 
 app.get("/healthz", async (_req, res) => {
   try {

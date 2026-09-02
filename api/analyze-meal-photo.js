@@ -1,5 +1,6 @@
 const MAX_BODY_CHARS = 3_000_000;
 const MAX_IMAGE_CHARS = 2_500_000;
+const MAX_BINARY_IMAGE_BYTES = 12 * 1024 * 1024;
 const DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com";
 const DEFAULT_VISION_MODEL = "qwen3-vl-plus";
 const DEFAULT_IMAGE_MODEL = "qwen-image-3.0";
@@ -29,7 +30,7 @@ function createHandler(database = defaultDatabase, auth = defaultAuth, services 
     }
 
     try {
-      const body = await readJsonBody(req);
+      const body = await readPhotoBody(req);
       const user = await auth.requireUser(req, database);
       const householdId = normalizeHouseholdId(body.householdId);
       const membership = await database.findHouseholdMembership(user.id, householdId);
@@ -78,7 +79,10 @@ function createHandler(database = defaultDatabase, auth = defaultAuth, services 
       }
 
       const storedImage = storedPhoto ? storedPhotoToDataUrl(storedPhoto, "original") : "";
-      const image = await standardizePhoto(normalizeImage(body.image || storedImage));
+      const suppliedImage = body.image || storedImage;
+      const image = body.binaryUpload
+        ? normalizeImage(await standardizePhoto(suppliedImage))
+        : await standardizePhoto(normalizeImage(suppliedImage));
       const targetNames = normalizeTargetNames(body.targetNames);
       let analysis = suppliedAnalysis;
       if (!analysis?.items?.length) {
@@ -478,6 +482,23 @@ function normalizePhotoId(value) {
 
 function requirePhotoReference(dateKey, photoId) {
   if (!dateKey || !photoId) throw httpError("缺少照片日期或编号", 400);
+}
+
+function readPhotoBody(req) {
+  if (!Buffer.isBuffer(req.body)) return readJsonBody(req);
+  if (!req.body.length) throw httpError("请上传照片", 400);
+  if (req.body.length > MAX_BINARY_IMAGE_BYTES) throw httpError("图片过大，请压缩后再试", 413);
+  const mime = normalizeImageMime(req.headers && req.headers["x-image-mime"]);
+  return Promise.resolve({
+    ...((req && req.query) || {}),
+    image: bufferDataUrl(req.body, mime),
+    binaryUpload: true
+  });
+}
+
+function normalizeImageMime(value) {
+  const mime = String(value || "").trim().toLowerCase();
+  return ["image/jpeg", "image/png", "image/webp"].includes(mime) ? mime : "image/jpeg";
 }
 
 function dataImageParts(value) {

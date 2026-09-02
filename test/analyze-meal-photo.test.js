@@ -205,6 +205,47 @@ test("照片识别结果和原图按家庭日期保存", async () => {
   assert.equal(stored.analysis.totalCalories, 320);
 });
 
+test("微信临时文件可以用二进制请求直接上传并识别", async () => {
+  const householdId = "88888888-8888-4888-8888-888888888888";
+  let standardizedInput = "";
+  let stored;
+  const database = {
+    findHouseholdMembership: async () => ({ role: "owner" }),
+    upsertHouseholdMealPhoto: async (value) => {
+      stored = value;
+      return { photo_id: value.photoId };
+    }
+  };
+  const handler = createHandler(database, { requireUser: async () => ({ id: "user-8" }) }, {
+    standardizeImage: async (image) => {
+      standardizedInput = image;
+      return "data:image/jpeg;base64,AA==";
+    },
+    analyzeMealPhoto: async () => ({
+      totalCalories: 280,
+      confidence: "medium",
+      items: [{ label: "宫保鸡丁", calories: 280 }]
+    })
+  });
+  const response = responseRecorder();
+
+  await handler({
+    method: "POST",
+    headers: { "x-image-mime": "image/png" },
+    query: {
+      householdId,
+      dateKey: "2026-09-02",
+      photoId: "photo-binary01"
+    },
+    body: Buffer.from([0])
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(standardizedInput, "data:image/png;base64,AA==");
+  assert.equal(stored.photoId, "photo-binary01");
+  assert.equal(stored.analysis.totalCalories, 280);
+});
+
 test("已登录家庭成员可恢复当天原图、识别结果和分享图", async () => {
   const householdId = "44444444-4444-4444-8444-444444444444";
   const database = {

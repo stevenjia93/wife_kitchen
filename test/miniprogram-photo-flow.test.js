@@ -5,15 +5,51 @@ const path = require("node:path");
 
 const projectRoot = path.join(__dirname, "..");
 
+test("direct image request sends the temporary file as binary data", async () => {
+  const apiPath = path.join(projectRoot, "miniprogram/utils/api.js");
+  const previousGlobals = { wx: global.wx, getApp: global.getApp };
+  let requestOptions;
+  try {
+    global.getApp = () => ({ globalData: { apiBase: "https://api.wife-kitchen.com" } });
+    global.wx = {
+      getStorageSync: () => ({ token: "test-token" }),
+      getFileSystemManager: () => ({
+        readFile: ({ success }) => success({ data: Uint8Array.from([1, 2, 3]).buffer })
+      }),
+      request: (options) => {
+        requestOptions = options;
+        options.success({ statusCode: 200, data: { analysis: { totalCalories: 123 } } });
+      }
+    };
+    delete require.cache[require.resolve(apiPath)];
+    const { requestImageFile } = require(apiPath);
+    const result = await requestImageFile("/api/analyze-meal-photo", "/tmp/photo.jpg", {
+      householdId: "household-1",
+      photoId: "photo-1"
+    });
+
+    assert.equal(requestOptions.method, "POST");
+    assert.equal(requestOptions.header.authorization, "Bearer test-token");
+    assert.equal(requestOptions.header["content-type"], "application/octet-stream");
+    assert.equal(requestOptions.data.byteLength, 3);
+    assert.match(requestOptions.url, /householdId=household-1/);
+    assert.equal(result.analysis.totalCalories, 123);
+  } finally {
+    delete require.cache[require.resolve(apiPath)];
+    global.wx = previousGlobals.wx;
+    global.getApp = previousGlobals.getApp;
+  }
+});
+
 test("re-upload replaces the current photo and auto-generates a share image after recognition", () => {
   const source = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.js"), "utf8");
   const template = fs.readFileSync(path.join(projectRoot, "miniprogram/pages/home/index.wxml"), "utf8");
   assert.match(source, /plan\.afterPhotos = \[photo\]/);
-  assert.match(source, /this\.analyzeMealPhoto\(photo\.id\)/);
+  assert.match(source, /this\.analyzeMealPhoto\(photo\.id, \{ filePath \}\)/);
   const uploadStart = source.indexOf("async uploadMealPhoto() {");
   const uploadEnd = source.indexOf("confirmPhotoReplacement() {", uploadStart);
   const uploadSource = source.slice(uploadStart, uploadEnd);
-  assert.ok(uploadSource.indexOf("plan.afterPhotos = [photo]") < uploadSource.indexOf("await this.imageFileToDataUrl(filePath)"));
+  assert.ok(uploadSource.indexOf("this.analyzeMealPhoto(photo.id, { filePath })") < uploadSource.indexOf("this.imageFileToDataUrl(filePath)"));
   assert.ok(uploadSource.indexOf("this.refreshView()") < uploadSource.indexOf("this.persistState()"));
   assert.match(uploadSource, /照片已选择，正在识别/);
   assert.match(uploadSource, /fail:\s*\(error\)\s*=>/);
@@ -30,7 +66,7 @@ test("re-upload replaces the current photo and auto-generates a share image afte
   assert.doesNotMatch(template, /剩 \{\{photoAttemptsRemaining\}\} 次/);
 });
 
-test("selecting a photo refreshes the card before preprocessing and starts recognition", async () => {
+test("selecting a photo starts direct recognition even when optional preprocessing stalls", async () => {
   const pagePath = path.join(projectRoot, "miniprogram/pages/home/index.js");
   const stateUtils = require(path.join(projectRoot, "miniprogram/utils/state.js"));
   const previousGlobals = { Page: global.Page, wx: global.wx, getApp: global.getApp };
@@ -53,7 +89,7 @@ test("selecting a photo refreshes the card before preprocessing and starts recog
           options.success({ tempFiles: [{ tempFilePath: "/mock-input/photo.jpg" }] })
         );
       },
-      compressImage: ({ success }) => success({ tempFilePath: "/mock-input/compressed.jpg" }),
+      compressImage() {},
       getFileSystemManager: () => ({
         readFileSync: () => Buffer.from("photo-bytes").toString("base64"),
         writeFile() {},
@@ -76,9 +112,12 @@ test("selecting a photo refreshes the card before preprocessing and starts recog
       },
       queueRemoteSave() {}
     };
+    page.imageFileToDataUrl = () => new Promise(() => {});
     let sawLoadingCard = false;
-    page.analyzeMealPhoto = async () => {
+    let analyzedFilePath = "";
+    page.analyzeMealPhoto = async (_photoId, options) => {
       sawLoadingCard = page.data.photos.length === 1 && page.data.photos[0].analysisStatus === "loading";
+      analyzedFilePath = options.filePath;
     };
 
     await page.uploadMealPhoto();
@@ -88,6 +127,7 @@ test("selecting a photo refreshes the card before preprocessing and starts recog
     ]);
 
     assert.equal(sawLoadingCard, true);
+    assert.equal(analyzedFilePath, "/mock-input/photo.jpg");
     assert.equal(page.data.photos.length, 1);
     assert.equal(page.data.photos[0].localImagePath, "/mock-input/photo.jpg");
     assert.ok(toasts.includes("照片已选择，正在识别"));

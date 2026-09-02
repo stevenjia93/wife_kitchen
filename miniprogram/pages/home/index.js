@@ -1,5 +1,5 @@
 const stateUtils = require("../../utils/state");
-const { AUTH_KEY, loginWithWechat, requestApi, showToast, requirePrivacyAuthorization } = require("../../utils/api");
+const { AUTH_KEY, loginWithWechat, requestApi, requestImageFile, showToast, requirePrivacyAuthorization } = require("../../utils/api");
 const SHARE_TASK_POLL_INTERVAL_MS = 5000;
 const SHARE_TASK_MAX_WAIT_MS = 12 * 60 * 1000;
 const MAX_RECIPE_STEPS = 32;
@@ -1404,23 +1404,16 @@ Page({
         this.refreshView();
         showToast("照片已选择，正在识别");
         this.persistState();
-        try {
-          const image = await this.imageFileToDataUrl(filePath);
-          this.photoImages[photo.id] = image;
-          this.analyzeMealPhoto(photo.id);
-          this.dataUrlToLocalImageFile(image, photoId)
-            .then((localImagePath) => {
-              if (localImagePath) this.patchPhoto(photo.id, { localImagePath }, photo.dateKey);
-            })
-            .catch((error) => console.warn("餐桌照片本地缓存失败", error));
-        } catch (error) {
-          this.patchPhoto(photo.id, {
-            analysisStatus: "failed",
-            analysisError: error.message || "照片处理失败",
-            shareStatus: "idle"
-          }, photo.dateKey);
-          showToast(error.message || "照片处理失败");
-        }
+        this.analyzeMealPhoto(photo.id, { filePath });
+        this.imageFileToDataUrl(filePath)
+          .then((image) => {
+            this.photoImages[photo.id] = image;
+            return this.dataUrlToLocalImageFile(image, photoId);
+          })
+          .then((localImagePath) => {
+            if (localImagePath) this.patchPhoto(photo.id, { localImagePath }, photo.dateKey);
+          })
+          .catch((error) => console.warn("餐桌照片本地缓存失败", error));
       },
       fail: (error) => {
         if (!/cancel/i.test(String(error.errMsg || ""))) showToast(error.errMsg || "照片选择失败");
@@ -1542,18 +1535,19 @@ Page({
     });
   },
 
-  async analyzeMealPhoto(photoId) {
+  async analyzeMealPhoto(photoId, options = {}) {
     const currentPlan = ensurePlan(this.state, this.data.dateKey);
     const currentPhoto = (currentPlan.afterPhotos || []).find((item) => item.id === photoId);
     const dateKey = currentPhoto?.dateKey || this.data.dateKey;
     const plan = ensurePlan(this.state, dateKey);
     const photo = (plan.afterPhotos || []).find((item) => item.id === photoId);
     if (!photo) return;
-    const image =
-      (this.photoImages && this.photoImages[photoId]) ||
-      photo.image ||
-      (photo.localImagePath ? await this.localImageFileToDataUrl(photo.localImagePath).catch(() => "") : "");
-    if (!image) {
+    const image = options.filePath
+      ? ""
+      : (this.photoImages && this.photoImages[photoId]) ||
+        photo.image ||
+        (photo.localImagePath ? await this.localImageFileToDataUrl(photo.localImagePath).catch(() => "") : "");
+    if (!options.filePath && !image) {
       this.patchPhoto(photoId, {
         analysisStatus: photo.analysis ? "done" : "failed",
         analysisError: "原图没有保存在本地，请重新上传后估算",
@@ -1564,13 +1558,15 @@ Page({
     }
     try {
       this.patchPhoto(photoId, { analysisStatus: "loading", analysisError: "" }, dateKey);
-      const payload = await requestApi("/api/analyze-meal-photo", {
+      const requestData = {
         householdId: this.data.householdId,
         dateKey,
         photoId,
-        image,
         includeShareImage: true
-      });
+      };
+      const payload = options.filePath
+        ? await requestImageFile("/api/analyze-meal-photo", options.filePath, requestData)
+        : await requestApi("/api/analyze-meal-photo", { ...requestData, image });
       const shareRunning = Boolean(payload.shareTaskId) && ["PENDING", "RUNNING"].includes(payload.shareStatus);
       this.patchPhoto(photoId, {
         analysis: payload.analysis,
