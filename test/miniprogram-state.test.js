@@ -108,6 +108,40 @@ test("keeps the household cover in shared state while stripping transient meal m
   assert.equal(savedPayload.plans["2026-08-31"].afterPhotos[0].shareCreatedAt, "2026-08-31T02:00:00.000Z");
 });
 
+test("repairs truncated emoji before saving state as PostgreSQL jsonb", async () => {
+  const householdId = "77777777-7777-4777-8777-777777777777";
+  const truncatedEmoji = "🍀".repeat(24).slice(0, 47);
+  let savedPayload;
+  const database = {
+    findHouseholdMembership: async () => ({ role: "member", name: "我们的家" }),
+    saveHouseholdState: async (_householdId, payload) => {
+      savedPayload = payload;
+      return new Date("2026-09-02T13:21:45.000Z");
+    }
+  };
+  const auth = { requireUser: async () => ({ id: "user-emoji" }) };
+  const response = responseRecorder();
+
+  await createHandler(database, auth)(
+    {
+      method: "POST",
+      body: {
+        householdId,
+        payload: {
+          note: truncatedEmoji,
+          nested: { text: `开饭啦${String.fromCharCode(0xdf40)}` }
+        }
+      }
+    },
+    response
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(savedPayload.note.endsWith("\ufffd"), true);
+  assert.equal(savedPayload.nested.text, "开饭啦\ufffd");
+  assert.doesNotThrow(() => JSON.parse(JSON.stringify(savedPayload)));
+});
+
 test("rejects an invalid household id before membership access", async () => {
   const database = {
     findHouseholdMembership: async () => assert.fail("invalid input must not access database")

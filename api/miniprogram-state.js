@@ -48,6 +48,14 @@ function createHandler(database = defaultDatabase, auth = defaultAuth) {
     });
   } catch (error) {
     const statusCode = error.statusCode || (isDatabaseError(error) ? 503 : 400);
+    if (statusCode === 503) {
+      console.error("Household state database request failed", {
+        code: error.code || "",
+        message: error.message || "",
+        constraint: error.constraint || "",
+        routine: error.routine || ""
+      });
+    }
     res.status(statusCode).json({
       error: statusCode === 503 ? "国内同步服务暂时不可用，请稍后重试" : error.message || "家庭菜单同步失败"
     });
@@ -132,8 +140,30 @@ function stripPhotoImages(photo) {
 
 function stripDataImages(value) {
   if (Array.isArray(value)) return value.map(stripDataImages);
+  if (typeof value === "string") return replaceUnpairedSurrogates(value);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, stripDataImages(item)]));
+}
+
+function replaceUnpairedSurrogates(value) {
+  let result = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        result += value[index] + value[index + 1];
+        index += 1;
+      } else {
+        result += "\ufffd";
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      result += "\ufffd";
+    } else {
+      result += value[index];
+    }
+  }
+  return result;
 }
 
 function stripImageValue(value, fallback) {
