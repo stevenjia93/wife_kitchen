@@ -56,7 +56,7 @@ test("selecting a photo refreshes the card before preprocessing and starts recog
       compressImage: ({ success }) => success({ tempFilePath: "/mock-input/compressed.jpg" }),
       getFileSystemManager: () => ({
         readFileSync: () => Buffer.from("photo-bytes").toString("base64"),
-        writeFile: ({ success }) => success(),
+        writeFile() {},
         unlink: ({ success }) => success && success()
       }),
       setStorageSync() {},
@@ -82,11 +82,14 @@ test("selecting a photo refreshes the card before preprocessing and starts recog
     };
 
     await page.uploadMealPhoto();
-    await chooseCallback;
+    await Promise.race([
+      chooseCallback,
+      new Promise((resolve) => setTimeout(resolve, 50))
+    ]);
 
     assert.equal(sawLoadingCard, true);
     assert.equal(page.data.photos.length, 1);
-    assert.equal(page.data.photos[0].localImagePath, "/mock-data/meal-" + page.data.photos[0].id + ".jpg");
+    assert.equal(page.data.photos[0].localImagePath, "/mock-input/photo.jpg");
     assert.ok(toasts.includes("照片已选择，正在识别"));
   } finally {
     delete require.cache[require.resolve(pagePath)];

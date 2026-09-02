@@ -1406,10 +1406,13 @@ Page({
         this.persistState();
         try {
           const image = await this.imageFileToDataUrl(filePath);
-          const localImagePath = await this.dataUrlToLocalImageFile(image, photoId).catch(() => "");
           this.photoImages[photo.id] = image;
-          this.patchPhoto(photo.id, { localImagePath: localImagePath || filePath }, photo.dateKey);
           this.analyzeMealPhoto(photo.id);
+          this.dataUrlToLocalImageFile(image, photoId)
+            .then((localImagePath) => {
+              if (localImagePath) this.patchPhoto(photo.id, { localImagePath }, photo.dateKey);
+            })
+            .catch((error) => console.warn("餐桌照片本地缓存失败", error));
         } catch (error) {
           this.patchPhoto(photo.id, {
             analysisStatus: "failed",
