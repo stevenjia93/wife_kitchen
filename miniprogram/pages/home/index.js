@@ -1,5 +1,13 @@
 const stateUtils = require("../../utils/state");
-const { AUTH_KEY, loginWithWechat, requestApi, requestImageFile, showToast, requirePrivacyAuthorization } = require("../../utils/api");
+const {
+  AUTH_KEY,
+  loginWithWechat,
+  requestApi,
+  requestImageFile,
+  resetDevelopmentCacheOnce,
+  showToast,
+  requirePrivacyAuthorization
+} = require("../../utils/api");
 const SHARE_TASK_POLL_INTERVAL_MS = 5000;
 const SHARE_TASK_MAX_WAIT_MS = 12 * 60 * 1000;
 const MAX_RECIPE_STEPS = 32;
@@ -89,6 +97,7 @@ Page({
   },
 
   onLoad(options) {
+    resetDevelopmentCacheOnce();
     this.enableShareMenu();
     this.state = this.loadLocalState();
     this.photoImages = {};

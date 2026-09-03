@@ -1,4 +1,6 @@
 const AUTH_KEY = "wife-kitchen-mini-auth-v1";
+const CLIENT_BUILD = "1.2.22";
+const DEV_CACHE_RESET_KEY = `wife-kitchen-dev-cache-reset-${CLIENT_BUILD}`;
 
 function requestApi(path, data, options = {}) {
   const app = getApp();
@@ -9,7 +11,7 @@ function requestApi(path, data, options = {}) {
     const header = { "content-type": "application/json" };
     if (authState?.token) header.authorization = `Bearer ${authState.token}`;
     wx.request({
-      url: `${apiBase}${path}`,
+      url: appendClientBuild(`${apiBase}${path}`),
       method: options.method || "POST",
       data,
       timeout: options.timeout || 120000,
@@ -35,53 +37,58 @@ function requestImageFile(path, filePath, data, options = {}) {
   if (!apiBase) return Promise.reject(new Error("国内 API 域名尚未配置"));
   return new Promise((resolve, reject) => {
     const authState = options.auth === false ? null : wx.getStorageSync(AUTH_KEY) || null;
-    const query = Object.entries(data || {})
+    const query = Object.entries({ ...(data || {}), clientBuild: CLIENT_BUILD })
       .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
       .join("&");
     const header = { "content-type": "application/octet-stream", "x-image-mime": imageMimeFromPath(filePath) };
     if (authState?.token) header.authorization = `Bearer ${authState.token}`;
-    let settled = false;
-    const finish = (callback, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(readTimeout);
-      callback(value);
-    };
-    const readTimeout = setTimeout(() => finish(reject, new Error("读取照片超时，请重新选择")), 15000);
-    wx.getFileSystemManager().readFile({
-      filePath,
-      success(result) {
-        if (settled) return;
-        const bytes = result.data;
-        if (!bytes || !bytes.byteLength) {
-          finish(reject, new Error("图片读取失败"));
-          return;
+    let bytes;
+    try {
+      bytes = wx.getFileSystemManager().readFileSync(filePath);
+    } catch (error) {
+      reject(new Error(error.errMsg || error.message || "图片读取失败"));
+      return;
+    }
+    if (!bytes || !bytes.byteLength) {
+      reject(new Error("图片读取失败"));
+      return;
+    }
+    wx.request({
+      url: `${apiBase}${path}${query ? `?${query}` : ""}`,
+      method: "POST",
+      data: bytes,
+      timeout: options.timeout || 120000,
+      header,
+      success(response) {
+        const payload = response.data || {};
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          resolve(payload);
+        } else {
+          reject(new Error(payload.error || `请求失败：${response.statusCode}`));
         }
-        clearTimeout(readTimeout);
-        wx.request({
-          url: `${apiBase}${path}${query ? `?${query}` : ""}`,
-          method: "POST",
-          data: bytes,
-          timeout: options.timeout || 120000,
-          header,
-          success(response) {
-            const payload = response.data || {};
-            if (response.statusCode >= 200 && response.statusCode < 300) {
-              finish(resolve, payload);
-            } else {
-              finish(reject, new Error(payload.error || `请求失败：${response.statusCode}`));
-            }
-          },
-          fail(error) {
-            finish(reject, new Error(error.errMsg || "照片上传失败"));
-          }
-        });
       },
       fail(error) {
-        finish(reject, new Error(error.errMsg || "图片读取失败"));
+        reject(new Error(error.errMsg || "照片上传失败"));
       }
     });
   });
+}
+
+function appendClientBuild(url) {
+  return `${url}${String(url).includes("?") ? "&" : "?"}clientBuild=${encodeURIComponent(CLIENT_BUILD)}`;
+}
+
+function resetDevelopmentCacheOnce() {
+  try {
+    const account = wx.getAccountInfoSync ? wx.getAccountInfoSync() : null;
+    if (account?.miniProgram?.envVersion !== "develop") return false;
+    if (wx.getStorageSync(DEV_CACHE_RESET_KEY)) return false;
+    wx.clearStorageSync();
+    wx.setStorageSync(DEV_CACHE_RESET_KEY, true);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function imageMimeFromPath(filePath) {
@@ -132,9 +139,11 @@ function requirePrivacyAuthorization() {
 
 module.exports = {
   AUTH_KEY,
+  CLIENT_BUILD,
   loginWithWechat,
   requestImageFile,
   requestApi,
+  resetDevelopmentCacheOnce,
   showToast,
   requirePrivacyAuthorization
 };

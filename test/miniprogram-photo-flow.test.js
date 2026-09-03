@@ -14,7 +14,7 @@ test("direct image request sends the temporary file as binary data", async () =>
     global.wx = {
       getStorageSync: () => ({ token: "test-token" }),
       getFileSystemManager: () => ({
-        readFile: ({ success }) => success({ data: Uint8Array.from([1, 2, 3]).buffer })
+        readFileSync: () => Uint8Array.from([1, 2, 3]).buffer
       }),
       request: (options) => {
         requestOptions = options;
@@ -33,11 +33,45 @@ test("direct image request sends the temporary file as binary data", async () =>
     assert.equal(requestOptions.header["content-type"], "application/octet-stream");
     assert.equal(requestOptions.data.byteLength, 3);
     assert.match(requestOptions.url, /householdId=household-1/);
+    assert.match(requestOptions.url, /clientBuild=1\.2\.22/);
     assert.equal(result.analysis.totalCalories, 123);
   } finally {
     delete require.cache[require.resolve(apiPath)];
     global.wx = previousGlobals.wx;
     global.getApp = previousGlobals.getApp;
+  }
+});
+
+test("development preview clears local cache once without affecting release builds", () => {
+  const apiPath = path.join(projectRoot, "miniprogram/utils/api.js");
+  const previousWx = global.wx;
+  const storage = {};
+  let clearCount = 0;
+  try {
+    global.wx = {
+      getAccountInfoSync: () => ({ miniProgram: { envVersion: "develop" } }),
+      getStorageSync: (key) => storage[key],
+      setStorageSync: (key, value) => {
+        storage[key] = value;
+      },
+      clearStorageSync: () => {
+        clearCount += 1;
+        Object.keys(storage).forEach((key) => delete storage[key]);
+      }
+    };
+    delete require.cache[require.resolve(apiPath)];
+    const { resetDevelopmentCacheOnce } = require(apiPath);
+
+    assert.equal(resetDevelopmentCacheOnce(), true);
+    assert.equal(resetDevelopmentCacheOnce(), false);
+    assert.equal(clearCount, 1);
+
+    global.wx.getAccountInfoSync = () => ({ miniProgram: { envVersion: "release" } });
+    assert.equal(resetDevelopmentCacheOnce(), false);
+    assert.equal(clearCount, 1);
+  } finally {
+    delete require.cache[require.resolve(apiPath)];
+    global.wx = previousWx;
   }
 });
 
